@@ -363,7 +363,13 @@ fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatch
 }
 
 fn display_invocation_name(raw: &OsStr) -> String {
-    Path::new(raw)
+    let file_name = Path::new(raw)
+        .file_name()
+        .unwrap_or(raw)
+        .to_string_lossy();
+    let leaf = file_name.rsplit(['/', '\\']).next().unwrap_or(&file_name);
+
+    Path::new(leaf)
         .file_stem()
         .and_then(|value| value.to_str())
         .map(str::trim)
@@ -434,6 +440,10 @@ mod tests {
     fn invocation_name_strips_exe_extension() {
         assert_eq!(
             display_invocation_name(OsStr::new(r"C:\tools\npnp.exe")),
+            "npnp"
+        );
+        assert_eq!(
+            display_invocation_name(OsStr::new("/usr/local/bin/npnp")),
             "npnp"
         );
     }

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/version-1.0.1-e05d44?style=flat-square" alt="version 1.0.1"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/version-1.0.2-e05d44?style=flat-square" alt="version 1.0.2"></a>
   <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/license-Apache--2.0-f08c5a?style=flat-square" alt="license Apache 2.0"></a>
   <a href=".github/workflows/release.yml"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2ea44f?style=flat-square" alt="platform Windows macOS Linux"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-edition%202024-f28d1a?style=flat-square" alt="rust edition 2024"></a>

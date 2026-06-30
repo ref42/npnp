@@ -1,0 +1,47 @@
+name: windows-release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin npnp
+
+      - name: Package Windows binary
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $asset = "npnp-$tag-windows-x86_64.zip"
+          Compress-Archive -Path target\release\npnp.exe -DestinationPath $asset -Force
+          "ASSET_NAME=$asset" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npnp-windows-${{ github.ref_name }}
+          path: ${{ env.ASSET_NAME }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET_NAME }}
+          generate_release_notes: true

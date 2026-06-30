@@ -1,0 +1,5 @@
+{
+  "result": {
+    "dataStr": "[\"DOCTYPE\",\"SYMBOL\",\"1.1\"]\n[\"PART\",\"U.1\",{\"BBOX\":[-10,-10,10,10]}]\n[\"RECT\",\"body\",-10,-10,10,10,0,0,0,\"st1\",0]\n[\"ATTR\",\"root1\",\"\",\"Symbol\",\"REGRESSION\",false,false,null,null,0,\"st3\",0]\n[\"ATTR\",\"root2\",\"\",\"Designator\",\"U?\",false,false,null,null,0,\"st3\",0]\n[\"PIN\",\"p1\",1,null,-20,0,10,0,null,0,0,1]\n[\"ATTR\",\"p1n\",\"p1\",\"NAME\",\"A\",false,true,-5,0,0,\"st3\",0]\n[\"ATTR\",\"p1d\",\"p1\",\"NUMBER\",\"1\",false,true,-10,0,0,\"st4\",0]\n[\"PIN\",\"p2\",1,null,20,0,10,180,null,0,0,1]\n[\"ATTR\",\"p2n\",\"p2\",\"NAME\",\"B\",false,true,5,0,0,\"st3\",0]\n[\"ATTR\",\"p2d\",\"p2\",\"NUMBER\",\"2\",false,true,10,0,0,\"st4\",0]"
+  }
+}

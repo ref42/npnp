@@ -7,7 +7,7 @@
 <p align="center">
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/version-1.0.0-e05d44?style=flat-square" alt="version 1.0.0"></a>
   <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/license-Apache--2.0-f08c5a?style=flat-square" alt="license Apache 2.0"></a>
-  <a href=".github/workflows/windows-release.yml"><img src="https://img.shields.io/badge/platform-Windows-2ea44f?style=flat-square" alt="platform Windows"></a>
+  <a href=".github/workflows/release.yml"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2ea44f?style=flat-square" alt="platform Windows macOS Linux"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-edition%202024-f28d1a?style=flat-square" alt="rust edition 2024"></a>
 </p>
 
@@ -86,6 +86,16 @@ KiCad 库预览：
 - 如果修改导出器，建议附上用于测试的器件编号或 fixture。
 - 如果改动会影响生成的 `.SchLib` 或 `.PcbLib`，请在提交前目检生成结果。
 - 较大的改动建议先开 issue 讨论范围。
+
+## 下载
+
+每个 tag release 会构建这些原生 `npnp` CLI 压缩包：
+
+- Windows x86_64：`npnp-vX.Y.Z-windows-x86_64.zip`
+- Linux x86_64：`npnp-vX.Y.Z-linux-x86_64.tar.gz`
+- Linux ARM64：`npnp-vX.Y.Z-linux-aarch64.tar.gz`
+- macOS Intel：`npnp-vX.Y.Z-macos-x86_64.tar.gz`
+- macOS Apple Silicon：`npnp-vX.Y.Z-macos-aarch64.tar.gz`
 
 ## CLI
 

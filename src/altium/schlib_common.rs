@@ -15,7 +15,7 @@ const GRID_UNITS: f64 = 10.0;
 const PIN_LENGTH_UNITS: f64 = 20.0;
 pub(super) const BORDER_BGR: i32 = SYMBOL_BGR;
 pub(super) const FILL_BGR: i32 = 0xE0FFFF;
-pub(super) const SYMBOL_BGR: i32 = 0x000000;
+pub(super) const SYMBOL_BGR: i32 = 0x68380B;
 pub(super) const RED_BGR: i32 = 0x0000FF;
 const BLUE_BGR: i32 = 0xFF0000;
 

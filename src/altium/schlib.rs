@@ -401,7 +401,8 @@ fn build_component(
             });
             for pin in placed_pins {
                 component.pins.push(Pin {
-                    designator: pin.designator,
+                    designator: pin.designator.clone(),
+                    display_designator: pin.designator,
                     name: pin.name,
                     location: common::CoordPoint::from_symbol_units(
                         pin.x_units,
@@ -522,6 +523,7 @@ fn build_component(
             });
             has_any_body = true;
         }
+        let graphics_bounds = part.graphics_bounds();
         for (pin_index, pin) in part.pins.iter().enumerate() {
             let attrs = attr_by_parent.get(&pin.id);
             let designator = common::safe_attr(attrs, "NUMBER")
@@ -535,24 +537,20 @@ fn build_component(
             } else {
                 10.0
             };
-            let export_length_units = PIN_LENGTH_UNITS;
+            let pin_geometry = source_pin_geometry(pin, source_length_units, graphics_bounds);
             let show_name = common::safe_attr_flag(attrs, "NAME", !name.trim().is_empty());
             let show_designator = common::safe_attr_flag(attrs, "NUMBER", true);
-            let (location_x_units, location_y_units) = pin_body_location_from_easyeda(
-                pin.x_units,
-                pin.y_units,
-                source_length_units,
-                pin.rotation_degrees,
+            let location = common::CoordPoint::from_symbol_units(
+                pin_geometry.location_x_units,
+                pin_geometry.location_y_units,
             );
-            let location =
-                common::CoordPoint::from_symbol_units(location_x_units, location_y_units);
-            let orientation = pin_orientation_from_easyeda_rotation(pin.rotation_degrees);
             component.pins.push(Pin {
-                designator,
-                name: name.clone(),
+                designator: designator.clone(),
+                display_designator: designator,
+                name,
                 location,
-                length_raw: common::raw_from_symbol_units(export_length_units),
-                orientation,
+                length_raw: common::raw_from_symbol_units(pin_geometry.length_units),
+                orientation: pin_geometry.orientation,
                 show_name,
                 show_designator,
                 color_bgr: common::SYMBOL_BGR,
@@ -1126,7 +1124,7 @@ fn file_header_bytes(components: &[Component]) -> Vec<u8> {
     params.push("WEIGHT", schlib_weight(components).to_string());
     params.push("MINORVERSION", "2");
     params.push("FONTIDCOUNT", "1");
-    params.push("SIZE1", "10");
+    params.push("SIZE1", "4");
     params.push("FONTNAME1", "Times New Roman");
     params.push("USEMBCS", "T");
     params.push("ISBOC", "T");
@@ -1342,7 +1340,7 @@ fn component_data_bytes(component: &Component) -> Vec<u8> {
             w.write_i16(common::dxp_i16(pin.location.y_raw));
             w.write_i32(pin.color_bgr);
             w.write_pascal_short_string(&pin.name);
-            w.write_pascal_short_string(&pin.designator);
+            w.write_pascal_short_string(&pin.display_designator);
             w.write_pascal_short_string("");
             w.write_pascal_short_string("");
             w.write_pascal_short_string("");
@@ -1385,7 +1383,6 @@ fn component_data_bytes(component: &Component) -> Vec<u8> {
     c.push("LOCATION.Y_FRAC", "-15");
     c.push("COLOR", "8388608");
     c.push("FONTID", "1");
-    c.push("ISHIDDEN", "T");
     c.push("TEXT", &component.comment_text);
     c.push("NAME", "Comment");
     c.push("UNIQUEID", stable_unique_id(&component.name, "COMMENT"));
@@ -1491,6 +1488,52 @@ fn text_orientation_from_rotation(rotation: f64) -> u8 {
 }
 fn pin_orientation_from_easyeda_rotation(rotation: f64) -> u8 {
     ((common::normalize_angle(rotation) / 90.0).round() as i32).rem_euclid(4) as u8
+}
+fn source_pin_geometry(
+    pin: &PinRaw,
+    source_length_units: f64,
+    graphics_bounds: Option<common::Bounds>,
+) -> PinGeometry {
+    let mut orientation = pin_orientation_from_easyeda_rotation(pin.rotation_degrees);
+    let mut length_units = source_length_units;
+    let mut location_x_units = pin.x_units;
+    let mut location_y_units = pin.y_units;
+
+    if let Some(bounds) = graphics_bounds {
+        let horizontal = matches!(orientation, 0 | 2);
+        if horizontal {
+            if pin.x_units <= bounds.min_x_units {
+                orientation = 2;
+                length_units = bounds.min_x_units - pin.x_units;
+                location_x_units = bounds.min_x_units;
+            } else if pin.x_units >= bounds.max_x_units {
+                orientation = 0;
+                length_units = pin.x_units - bounds.max_x_units;
+                location_x_units = bounds.max_x_units;
+            }
+        } else if pin.y_units <= bounds.min_y_units {
+            orientation = 3;
+            length_units = bounds.min_y_units - pin.y_units;
+            location_y_units = bounds.min_y_units;
+        } else if pin.y_units >= bounds.max_y_units {
+            orientation = 1;
+            length_units = pin.y_units - bounds.max_y_units;
+            location_y_units = bounds.max_y_units;
+        }
+    }
+
+    if !length_units.is_finite() || length_units <= 0.000001 {
+        length_units = source_length_units;
+        location_x_units = pin.x_units;
+        location_y_units = pin.y_units;
+    }
+
+    PinGeometry {
+        location_x_units,
+        location_y_units,
+        length_units,
+        orientation,
+    }
 }
 fn pin_body_location_from_easyeda(
     x_units: f64,
@@ -1624,6 +1667,46 @@ impl PartRaw {
     fn has_complex_body(&self) -> bool {
         !self.polylines.is_empty() || !self.arcs.is_empty()
     }
+    fn graphics_bounds(&self) -> Option<common::Bounds> {
+        let mut bounds = common::OptionalBounds::default();
+        for rect in &self.rectangles {
+            bounds.update_x(
+                rect.x1_units.min(rect.x2_units),
+                rect.x1_units.max(rect.x2_units),
+            );
+            bounds.update_y(
+                rect.y1_units.min(rect.y2_units),
+                rect.y1_units.max(rect.y2_units),
+            );
+        }
+        for polyline in &self.polylines {
+            for point in &polyline.points {
+                bounds.update_x(point.x_units, point.x_units);
+                bounds.update_y(point.y_units, point.y_units);
+            }
+        }
+        for arc in &self.arcs {
+            bounds.update_x(
+                arc.start.x_units.min(arc.mid.x_units).min(arc.end.x_units),
+                arc.start.x_units.max(arc.mid.x_units).max(arc.end.x_units),
+            );
+            bounds.update_y(
+                arc.start.y_units.min(arc.mid.y_units).min(arc.end.y_units),
+                arc.start.y_units.max(arc.mid.y_units).max(arc.end.y_units),
+            );
+        }
+        for ellipse in &self.ellipses {
+            bounds.update_x(
+                ellipse.center_x_units - ellipse.radius_x_units,
+                ellipse.center_x_units + ellipse.radius_x_units,
+            );
+            bounds.update_y(
+                ellipse.center_y_units - ellipse.radius_y_units,
+                ellipse.center_y_units + ellipse.radius_y_units,
+            );
+        }
+        bounds.finish()
+    }
 }
 #[derive(Debug, Clone)]
 struct PinRaw {
@@ -1675,6 +1758,7 @@ struct TextRaw {
 #[derive(Debug)]
 struct Pin {
     designator: String,
+    display_designator: String,
     name: String,
     location: common::CoordPoint,
     length_raw: i64,
@@ -1684,6 +1768,13 @@ struct Pin {
     color_bgr: i32,
     owner_part_id: i32,
     owner_part_display_mode: i32,
+}
+#[derive(Debug, Clone, Copy)]
+struct PinGeometry {
+    location_x_units: f64,
+    location_y_units: f64,
+    length_units: f64,
+    orientation: u8,
 }
 #[derive(Debug)]
 struct Rectangle {
@@ -1837,6 +1928,7 @@ mod tests {
         assert!(data_text.contains("|TEXT=U?|"));
         assert!(data_text.contains("|NAME=Comment|"));
         assert!(data_text.contains("|TEXT=={Manufacturer Part}|"));
+        assert!(!data_text.contains("|ISHIDDEN=T|TEXT=={Manufacturer Part}|NAME=Comment|"));
         assert!(data_text.contains("|NAME=Footprint|"));
         assert!(data_text.contains("|TEXT=LQFN-56_L7.0-W7.0-P0.4-EP|"));
         assert!(data_text.contains("|NAME=Manufacturer|"));
@@ -1920,7 +2012,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_easyeda_pin_orientation_points_outward_from_body() {
+    fn easyeda_pin_orientation_points_outward_from_body() {
         let component = build_component_from_payload(&sample_payload(), "TEST/COMP").unwrap();
         let pin_1 = component
             .pins
@@ -1933,9 +2025,53 @@ mod tests {
             .find(|pin| pin.designator == "2")
             .unwrap();
 
-        assert_eq!(pin_1.orientation, 0);
-        assert_eq!(pin_2.orientation, 2);
-        assert_eq!(pin_1.location.x_raw, common::raw_from_symbol_units(-30.0));
-        assert_eq!(pin_2.location.x_raw, common::raw_from_symbol_units(30.0));
+        assert_eq!(pin_1.orientation, 2);
+        assert_eq!(pin_2.orientation, 0);
+        assert_eq!(pin_1.location.x_raw, common::raw_from_symbol_units(-10.0));
+        assert_eq!(pin_2.location.x_raw, common::raw_from_symbol_units(10.0));
+        assert_eq!(pin_1.length_raw, common::raw_from_symbol_units(10.0));
+        assert_eq!(pin_2.length_raw, common::raw_from_symbol_units(10.0));
+        assert!(pin_1.show_name);
+        assert!(pin_1.show_designator);
+        assert_eq!(pin_1.name, "A");
+        assert_eq!(pin_1.display_designator, "1");
+    }
+
+    #[test]
+    fn source_symbol_graphics_keep_y_coordinates_and_pins_point_outward() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","SYMBOL","1.1"]
+["PART","U.1",{"BBOX":[0,0,100,100]}]
+["RECT","body",10,20,30,40,0,0,0,"st1",0]
+["PIN","top",1,null,50,10,10,90,null,0,0,1]
+["ATTR","topn","top","NAME","TOP",false,true,50,0,0,"st3",0]
+["ATTR","topd","top","NUMBER","1",false,true,50,0,0,"st4",0]
+["PIN","bottom",1,null,50,90,10,270,null,0,0,1]
+["ATTR","bottomn","bottom","NAME","BOTTOM",false,true,50,0,0,"st3",0]
+["ATTR","bottomd","bottom","NUMBER","2",false,true,50,0,0,"st4",0]"#}});
+
+        let component = build_component_from_payload(&payload, "TEST/COMP").unwrap();
+        let rect = component.rectangles.first().unwrap();
+        let top_pin = component
+            .pins
+            .iter()
+            .find(|pin| pin.designator == "1")
+            .unwrap();
+        let bottom_pin = component
+            .pins
+            .iter()
+            .find(|pin| pin.designator == "2")
+            .unwrap();
+
+        assert_eq!(rect.corner1.y_raw, common::raw_from_symbol_units(20.0));
+        assert_eq!(rect.corner2.y_raw, common::raw_from_symbol_units(40.0));
+        assert_eq!(top_pin.location.y_raw, common::raw_from_symbol_units(20.0));
+        assert_eq!(top_pin.length_raw, common::raw_from_symbol_units(10.0));
+        assert_eq!(top_pin.orientation, 3);
+        assert_eq!(
+            bottom_pin.location.y_raw,
+            common::raw_from_symbol_units(40.0)
+        );
+        assert_eq!(bottom_pin.length_raw, common::raw_from_symbol_units(50.0));
+        assert_eq!(bottom_pin.orientation, 1);
     }
 }

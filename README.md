@@ -105,7 +105,7 @@ Type `npnp --prompt` to print ready-to-run commands. Export commands are grouped
 npnp search C2040 --limit 5
 
 npnp altium export C2040 --full --output altium-libs --force
-npnp altium batch --input ids.txt --output generated\altium --merge --library-name MyLib --full --force --continue-on-error
+npnp altium batch --input ids.txt --output generated\altium --merge --library-name MyLib --full --continue-on-error
 npnp altium batch --input new_ids.txt --output generated\altium --merge --append --library-name MyLib --full --force --continue-on-error
 
 npnp kicad export C2040 --full --output kicad-libs --library-name MyParts --force
@@ -118,6 +118,7 @@ Useful shared flags:
 - `--force`: replace existing generated outputs.
 - `--english-metadata`: prefer English metadata when available, while falling back to source metadata when it is missing.
 - `--library-name`: set the merged Altium library name or KiCad library base name.
+- Altium `--merge` creates a new merged library and refuses to overwrite an existing one. Use `--merge --append` to add components to an existing merged library.
 
 ## GUI
 

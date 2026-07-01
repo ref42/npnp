@@ -404,7 +404,7 @@ fn prompt_examples(invoked_as: &str) -> String {
         "",
         "Batch export Altium merged libraries",
         &format!(
-            "  {command} altium batch --input ids.txt --output generated\\altium --merge --library-name MyLib --full --force --continue-on-error"
+            "  {command} altium batch --input ids.txt --output generated\\altium --merge --library-name MyLib --full --continue-on-error"
         ),
         "",
         "Append new parts into an existing Altium merged library",

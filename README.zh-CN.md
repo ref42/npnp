@@ -105,7 +105,7 @@ KiCad 库预览：
 npnp search C2040 --limit 5
 
 npnp altium export C2040 --full --output altium-libs --force
-npnp altium batch --input ids.txt --output generated\altium --merge --library-name MyLib --full --force --continue-on-error
+npnp altium batch --input ids.txt --output generated\altium --merge --library-name MyLib --full --continue-on-error
 npnp altium batch --input new_ids.txt --output generated\altium --merge --append --library-name MyLib --full --force --continue-on-error
 
 npnp kicad export C2040 --full --output kicad-libs --library-name MyParts --force
@@ -118,6 +118,7 @@ npnp kicad batch --input ids.txt --output generated\kicad --library-name MyParts
 - `--force`：覆盖已有生成结果。
 - `--english-metadata`：优先使用英文元数据；如果缺失，则自动回退到源数据中的元数据。
 - `--library-name`：设置 Altium 合并库名称或 KiCad 库基础名称。
+- Altium `--merge` 只创建新的合并库，不会覆盖已有同名库；要给已有合并库追加元件，请使用 `--merge --append`。
 
 ## GUI
 

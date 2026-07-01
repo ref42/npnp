@@ -390,6 +390,7 @@ async fn export_batch_merged_fresh(
         .output
         .join(format!("{}.PcbLib", sanitize_filename(&library_name)));
 
+    reject_existing_merged_outputs(targets, &schlib_path, &pcblib_path)?;
     progress.note(format!("Library: {library_name}"));
 
     let mut used_symbol_names = HashSet::new();
@@ -624,6 +625,28 @@ fn write_merged_outputs(
         summary.generated_files.push(pcblib_path.to_path_buf());
     }
     Ok(())
+}
+
+fn reject_existing_merged_outputs(
+    targets: ExportTargets,
+    schlib_path: &Path,
+    pcblib_path: &Path,
+) -> Result<()> {
+    let mut existing = Vec::new();
+    if targets.schlib && schlib_path.exists() {
+        existing.push(schlib_path.display().to_string());
+    }
+    if targets.pcblib && pcblib_path.exists() {
+        existing.push(pcblib_path.display().to_string());
+    }
+    if existing.is_empty() {
+        return Ok(());
+    }
+
+    Err(AppError::Other(format!(
+        "merged output already exists: {}. Use --append to add components, or choose a new --library-name/delete the existing library first.",
+        existing.join(", ")
+    )))
 }
 
 async fn export_merged_component(
@@ -972,9 +995,12 @@ fn format_elapsed(seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BatchOptions, format_elapsed, format_subject, parse_lcsc_ids, resolve_library_name,
+        BatchOptions, ExportTargets, format_elapsed, format_subject, parse_lcsc_ids,
+        reject_existing_merged_outputs, resolve_library_name,
     };
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parse_ids_deduplicates_and_preserves_order() {
@@ -1006,6 +1032,32 @@ mod tests {
         };
 
         assert_eq!(resolve_library_name(&options), "ids");
+    }
+
+    #[test]
+    fn fresh_merge_rejects_existing_selected_output() {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let schlib_path = std::env::temp_dir().join(format!("npnp_merge_guard_{timestamp}.SchLib"));
+        let pcblib_path = std::env::temp_dir().join(format!("npnp_merge_guard_{timestamp}.PcbLib"));
+        fs::write(&schlib_path, b"old library").unwrap();
+
+        let err = reject_existing_merged_outputs(
+            ExportTargets {
+                schlib: true,
+                pcblib: false,
+            },
+            &schlib_path,
+            &pcblib_path,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("already exists"));
+        assert!(err.contains("--append"));
+        fs::remove_file(schlib_path).ok();
     }
 
     #[test]

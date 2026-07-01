@@ -136,7 +136,7 @@ pub enum AltiumCommands {
         /// Export schematic and PCB libraries
         #[arg(long)]
         full: bool,
-        /// Write one merged library pair instead of one file per component
+        /// Create one merged library pair instead of one file per component
         #[arg(long)]
         merge: bool,
         /// Append missing components to an existing merged library

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct ComponentData {
     pub lcsc_id: String,
     pub title: String,
+    #[serde(default)]
+    pub designator: String,
     pub description: String,
     pub data_str: Vec<String>,
     pub bbox_x: f64, // Symbol bbox

@@ -27,7 +27,16 @@ pub fn build_pcblib_from_payload(
     step_bytes: Option<&[u8]>,
 ) -> Result<PcbLibrary> {
     let rows = parse_easyeda_rows(payload)?;
-    let model_3d = parse_footprint_3d_model(payload);
+    let model_3d = parse_footprint_3d_model(payload).or_else(|| {
+        step_bytes.map(|_| Model3dRaw {
+            title: component_name.to_string(),
+            uri: format!("embedded-step:{component_name}"),
+            height_mm: None,
+            rotation_x: 0.0,
+            rotation_y: 0.0,
+            rotation_z: 0.0,
+        })
+    });
     let mut pads = Vec::new();
     let mut overlay_polys = Vec::new();
     let mut overlay_circles = Vec::new();
@@ -1756,6 +1765,22 @@ mod tests {
         let component = &library.components[0];
         assert_eq!(library.models.len(), 0);
         assert_eq!(component.bodies.len(), 0);
+    }
+
+    #[test]
+    fn embeds_resolved_step_without_payload_model_metadata() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#}});
+        let library = build_pcblib_from_payload(
+            &payload,
+            "MODEL_FALLBACK",
+            Some(b"ISO-10303-21;END-ISO-10303-21;"),
+        )
+        .unwrap();
+
+        assert_eq!(library.models.len(), 1);
+        assert_eq!(library.components[0].bodies.len(), 1);
+        assert_eq!(library.models[0].name, "MODEL_FALLBACK.step");
     }
 
     #[test]

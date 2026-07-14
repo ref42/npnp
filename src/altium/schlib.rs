@@ -337,7 +337,7 @@ fn build_component(
         .filter(|value| !value.trim().is_empty())
         .or_else(|| root_attrs.get("DESIGNATOR").cloned())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "*".to_string());
+        .unwrap_or_else(|| "U?".to_string());
     let comment_text = metadata
         .comment
         .clone()
@@ -523,7 +523,7 @@ fn build_component(
             });
             has_any_body = true;
         }
-        let graphics_bounds = part.graphics_bounds();
+        let graphics_bounds = part.pin_attachment_bounds();
         for (pin_index, pin) in part.pins.iter().enumerate() {
             let attrs = attr_by_parent.get(&pin.id);
             let designator = common::safe_attr(attrs, "NUMBER")
@@ -1707,6 +1707,69 @@ impl PartRaw {
         }
         bounds.finish()
     }
+
+    fn pin_attachment_bounds(&self) -> Option<common::Bounds> {
+        let mut rectangular_bounds = common::OptionalBounds::default();
+        for rect in &self.rectangles {
+            rectangular_bounds.update_x(
+                rect.x1_units.min(rect.x2_units),
+                rect.x1_units.max(rect.x2_units),
+            );
+            rectangular_bounds.update_y(
+                rect.y1_units.min(rect.y2_units),
+                rect.y1_units.max(rect.y2_units),
+            );
+        }
+        if let Some(bounds) = rectangular_bounds.finish() {
+            return Some(bounds);
+        }
+
+        let closed_polylines: Vec<(common::Bounds, f64)> = self
+            .polylines
+            .iter()
+            .filter_map(closed_polyline_bounds)
+            .collect();
+        let largest_area = closed_polylines
+            .iter()
+            .map(|(_, area)| *area)
+            .fold(0.0_f64, f64::max);
+        if largest_area > 0.0 {
+            let mut body_bounds = common::OptionalBounds::default();
+            for (bounds, area) in closed_polylines {
+                if area + 1e-9 < largest_area * 0.5 {
+                    continue;
+                }
+                body_bounds.update_x(bounds.min_x_units, bounds.max_x_units);
+                body_bounds.update_y(bounds.min_y_units, bounds.max_y_units);
+            }
+            if let Some(bounds) = body_bounds.finish() {
+                return Some(bounds);
+            }
+        }
+
+        self.graphics_bounds()
+    }
+}
+
+fn closed_polyline_bounds(polyline: &PolylineRaw) -> Option<(common::Bounds, f64)> {
+    let first = polyline.points.first()?;
+    let last = polyline.points.last()?;
+    if polyline.points.len() < 4
+        || (first.x_units - last.x_units).abs() > 1e-6
+        || (first.y_units - last.y_units).abs() > 1e-6
+    {
+        return None;
+    }
+
+    let mut bounds = common::OptionalBounds::default();
+    for point in &polyline.points {
+        bounds.update_x(point.x_units, point.x_units);
+        bounds.update_y(point.y_units, point.y_units);
+    }
+    let bounds = bounds.finish()?;
+    let area = (bounds.max_x_units - bounds.min_x_units).abs()
+        * (bounds.max_y_units - bounds.min_y_units).abs();
+    (area > 1e-9).then_some((bounds, area))
 }
 #[derive(Debug, Clone)]
 struct PinRaw {
@@ -2073,5 +2136,39 @@ mod tests {
         );
         assert_eq!(bottom_pin.length_raw, common::raw_from_symbol_units(50.0));
         assert_eq!(bottom_pin.orientation, 1);
+    }
+
+    #[test]
+    fn decorative_led_arrows_do_not_move_pin_attachment_edges() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","SYMBOL","1.1"]
+["PART","LED.1",{"BBOX":[-20,-10,20,10]}]
+["PIN","right",1,null,20,0,15,180,null,0,0,1]
+["ATTR","rightn","right","NAME","K",false,true,20,0,0,"st3",0]
+["ATTR","rightd","right","NUMBER","1",false,true,20,0,0,"st4",0]
+["PIN","left",1,null,-20,0,15,0,null,0,0,1]
+["ATTR","leftn","left","NAME","A",false,true,-20,0,0,"st3",0]
+["ATTR","leftd","left","NUMBER","2",false,true,-20,0,0,"st4",0]
+["POLY","body",[5,-6,-5,0,5,7,5,-6],0,0,0,1]
+["POLY","bar",[-5,8,-5,-8],0,0,0,1]
+["POLY","arrow",[-15,-8,-10,-5,-13,-4,-15,-8],0,0,0,1]"#}});
+
+        let component = build_component_from_payload(&payload, "TEST/LED").unwrap();
+        let right = component
+            .pins
+            .iter()
+            .find(|pin| pin.designator == "1")
+            .unwrap();
+        let left = component
+            .pins
+            .iter()
+            .find(|pin| pin.designator == "2")
+            .unwrap();
+
+        assert_eq!(right.location.x_raw, common::raw_from_symbol_units(5.0));
+        assert_eq!(left.location.x_raw, common::raw_from_symbol_units(-5.0));
+        assert_eq!(right.length_raw, common::raw_from_symbol_units(15.0));
+        assert_eq!(left.length_raw, common::raw_from_symbol_units(15.0));
+        assert_eq!(right.orientation, 0);
+        assert_eq!(left.orientation, 2);
     }
 }

@@ -87,6 +87,23 @@ fn search_item_from_component(data: &ComponentData) -> SearchItem {
 fn symbol_payload_from_component(data: &ComponentData) -> Value {
     let mut rows = Vec::new();
 
+    if !data.designator.trim().is_empty() {
+        rows.push(json!([
+            "ATTR",
+            "root_designator",
+            "",
+            "Designator",
+            data.designator,
+            false,
+            false,
+            null,
+            null,
+            0,
+            "st3",
+            0
+        ]));
+    }
+
     push_symbol_rows(
         &mut rows,
         "U.1",
@@ -557,6 +574,7 @@ mod tests {
         assert!(data_str.contains(r#"["PIN""#));
         assert!(data_str.contains(r#""NUMBER","1""#));
         assert!(data_str.contains(r#""NAME","A""#));
+        assert!(data_str.contains(r#""Designator","U?""#));
     }
 
     #[test]
@@ -643,6 +661,7 @@ mod tests {
         ComponentData {
             lcsc_id: "C2849413".to_string(),
             title: "TEST-PART".to_string(),
+            designator: "U?".to_string(),
             description: "Generated fallback component".to_string(),
             data_str: vec![
                 "P~show~0~1~20~10~0~p1~0^^0~0^^M 0,0 h -10~#000^^1~0~0~0~A~start~Arial~6pt^^1~0~0~0~1~start~Arial~6pt".to_string(),

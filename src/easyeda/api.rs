@@ -230,6 +230,18 @@ impl EasyedaApi {
             .title
             .ok_or_else(|| EasyedaError::InvalidData("Missing title field".to_string()))?;
 
+        let designator = data_str_obj
+            .get("head")
+            .and_then(|head| {
+                head.get("c_para")
+                    .and_then(|params| params.get("pre"))
+                    .and_then(|value| value.as_str())
+                    .or_else(|| head.get("pre").and_then(|value| value.as_str()))
+            })
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
         let manufacturer = data_str_obj
             .get("head")
             .and_then(|h| h.get("c_para"))
@@ -346,6 +358,7 @@ impl EasyedaApi {
         Ok(ComponentData {
             lcsc_id: lcsc_id.to_string(),
             title,
+            designator,
             description,
             data_str,
             bbox_x,

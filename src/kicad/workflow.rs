@@ -335,6 +335,7 @@ mod tests {
         let mut component_data = ComponentData {
             lcsc_id: "C123".to_string(),
             title: "CN-TITLE".to_string(),
+            designator: "U?".to_string(),
             description: "CN description".to_string(),
             data_str: Vec::new(),
             bbox_x: 0.0,

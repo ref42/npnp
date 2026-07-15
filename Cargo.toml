@@ -16,7 +16,7 @@ include = [
     "Cargo.toml",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE-APACHE",
+    "LICENSE",
     "assets/**",
     "imgs/**",
     "src/**",

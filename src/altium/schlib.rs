@@ -16,6 +16,7 @@ const WHITE_BGR: i32 = 0xFFFFFF;
 const BODY_LINE_WIDTH_INDEX: i32 = 1;
 const GRAPHIC_LINE_WIDTH_INDEX: i32 = 1;
 const PIN_LENGTH_UNITS: f64 = 20.0;
+const MIN_INDUCTOR_PIN_LENGTH_UNITS: f64 = 10.0;
 
 #[derive(Debug, Clone, Default)]
 pub struct SchlibMetadata {
@@ -524,6 +525,12 @@ fn build_component(
             has_any_body = true;
         }
         let graphics_bounds = part.pin_attachment_bounds();
+        let min_attached_pin_length_units =
+            if part.is_inductor_coil_symbol(&component.designator_text) {
+                MIN_INDUCTOR_PIN_LENGTH_UNITS
+            } else {
+                0.0
+            };
         for (pin_index, pin) in part.pins.iter().enumerate() {
             let attrs = attr_by_parent.get(&pin.id);
             let designator = common::safe_attr(attrs, "NUMBER")
@@ -537,7 +544,12 @@ fn build_component(
             } else {
                 10.0
             };
-            let pin_geometry = source_pin_geometry(pin, source_length_units, graphics_bounds);
+            let pin_geometry = source_pin_geometry(
+                pin,
+                source_length_units,
+                graphics_bounds,
+                min_attached_pin_length_units,
+            );
             let show_name = common::safe_attr_flag(attrs, "NAME", !name.trim().is_empty());
             let show_designator = common::safe_attr_flag(attrs, "NUMBER", true);
             let location = common::CoordPoint::from_symbol_units(
@@ -1493,11 +1505,13 @@ fn source_pin_geometry(
     pin: &PinRaw,
     source_length_units: f64,
     graphics_bounds: Option<common::Bounds>,
+    min_attached_length_units: f64,
 ) -> PinGeometry {
     let mut orientation = pin_orientation_from_easyeda_rotation(pin.rotation_degrees);
     let mut length_units = source_length_units;
     let mut location_x_units = pin.x_units;
     let mut location_y_units = pin.y_units;
+    let mut attached_to_body = false;
 
     if let Some(bounds) = graphics_bounds {
         let horizontal = matches!(orientation, 0 | 2);
@@ -1506,19 +1520,23 @@ fn source_pin_geometry(
                 orientation = 2;
                 length_units = bounds.min_x_units - pin.x_units;
                 location_x_units = bounds.min_x_units;
+                attached_to_body = true;
             } else if pin.x_units >= bounds.max_x_units {
                 orientation = 0;
                 length_units = pin.x_units - bounds.max_x_units;
                 location_x_units = bounds.max_x_units;
+                attached_to_body = true;
             }
         } else if pin.y_units <= bounds.min_y_units {
             orientation = 3;
             length_units = bounds.min_y_units - pin.y_units;
             location_y_units = bounds.min_y_units;
+            attached_to_body = true;
         } else if pin.y_units >= bounds.max_y_units {
             orientation = 1;
             length_units = pin.y_units - bounds.max_y_units;
             location_y_units = bounds.max_y_units;
+            attached_to_body = true;
         }
     }
 
@@ -1526,6 +1544,11 @@ fn source_pin_geometry(
         length_units = source_length_units;
         location_x_units = pin.x_units;
         location_y_units = pin.y_units;
+        attached_to_body = false;
+    }
+
+    if attached_to_body && min_attached_length_units > 0.0 {
+        length_units = length_units.max(min_attached_length_units);
     }
 
     PinGeometry {
@@ -1749,6 +1772,90 @@ impl PartRaw {
 
         self.graphics_bounds()
     }
+
+    fn is_inductor_coil_symbol(&self, designator_text: &str) -> bool {
+        if !designator_text.trim().to_ascii_uppercase().starts_with('L') {
+            return false;
+        }
+        if self.pins.len() != 2
+            || self.polylines.len() < 2
+            || !self.rectangles.is_empty()
+            || !self.arcs.is_empty()
+            || !self.ellipses.is_empty()
+        {
+            return false;
+        }
+        if !self.pins.iter().all(|pin| {
+            matches!(
+                pin_orientation_from_easyeda_rotation(pin.rotation_degrees),
+                0 | 2
+            )
+        }) {
+            return false;
+        }
+
+        let Some(bounds) = self.graphics_bounds() else {
+            return false;
+        };
+        let min_pin_x = self
+            .pins
+            .iter()
+            .map(|pin| pin.x_units)
+            .fold(f64::INFINITY, f64::min);
+        let max_pin_x = self
+            .pins
+            .iter()
+            .map(|pin| pin.x_units)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if min_pin_x >= bounds.min_x_units || max_pin_x <= bounds.max_x_units {
+            return false;
+        }
+
+        self.polylines
+            .iter()
+            .filter(|polyline| is_open_coil_polyline(polyline))
+            .count()
+            >= 2
+    }
+}
+
+fn is_open_coil_polyline(polyline: &PolylineRaw) -> bool {
+    if polyline.points.len() < 6 {
+        return false;
+    }
+    let Some(first) = polyline.points.first() else {
+        return false;
+    };
+    let Some(last) = polyline.points.last() else {
+        return false;
+    };
+    if (first.x_units - last.x_units).abs() <= 1e-6 && (first.y_units - last.y_units).abs() <= 1e-6
+    {
+        return false;
+    }
+
+    let mut bounds = common::OptionalBounds::default();
+    for point in &polyline.points {
+        bounds.update_x(point.x_units, point.x_units);
+        bounds.update_y(point.y_units, point.y_units);
+    }
+    let Some(bounds) = bounds.finish() else {
+        return false;
+    };
+    let width = bounds.max_x_units - bounds.min_x_units;
+    let height = bounds.max_y_units - bounds.min_y_units;
+    if width <= 0.0 || height <= 0.5 || width < height {
+        return false;
+    }
+
+    let low_band = bounds.min_y_units + height * 0.35;
+    let endpoints_start_near_low = first.y_units <= low_band && last.y_units <= low_band;
+    let high_peak = bounds.min_y_units + height * 0.65;
+    endpoints_start_near_low
+        && polyline
+            .points
+            .iter()
+            .any(|point| point.y_units >= high_peak)
 }
 
 fn closed_polyline_bounds(polyline: &PolylineRaw) -> Option<(common::Bounds, f64)> {
@@ -2136,6 +2243,48 @@ mod tests {
         );
         assert_eq!(bottom_pin.length_raw, common::raw_from_symbol_units(50.0));
         assert_eq!(bottom_pin.orientation, 1);
+    }
+
+    #[test]
+    fn inductor_coil_pins_point_outward_and_use_altium_pin_length() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","SYMBOL","1.1"]
+["PART","L.1",{"BBOX":[-17.4,-0.45,17.2,4.86]}]
+["ATTR","designator","","Designator","L?",false,false,null,null,0,"st3",0]
+["PIN","right",1,null,20,0,3,180,null,0,0,1]
+["ATTR","rightn","right","NAME","2",false,false,13,-1.9,0,"st4",0]
+["ATTR","rightd","right","NUMBER","2",false,false,21,2.1,0,"st3",0]
+["PIN","left",1,null,-20,0,3,0,null,0,0,1]
+["ATTR","leftn","left","NAME","1",false,false,-13,-1.9,0,"st3",0]
+["ATTR","leftd","left","NUMBER","1",false,false,-21,2.1,0,"st4",0]
+["POLY","coil1",[-16.88,0.06,-16.68,1.70,-15.82,3.10,-14.48,4.03,-12.89,4.35,-11.31,4.03,-9.96,3.10,-9.10,1.70,-8.92,0.05],0,"st1",0]
+["POLY","coil2",[-8.40,0.06,-8.20,1.70,-7.34,3.10,-6.00,4.04,-4.42,4.36,-2.83,4.04,-1.49,3.10,-0.63,1.70,-0.44,0.06],0,"st1",0]
+["POLY","coil3",[0.07,0.06,0.26,1.70,1.12,3.10,2.46,4.04,4.05,4.36,5.64,4.04,6.98,3.10,7.84,1.70,8.03,0.06],0,"st1",0]
+["POLY","coil4",[8.70,0.06,8.91,1.69,9.78,3.08,11.11,3.99,12.69,4.30,14.27,3.98,15.60,3.07,16.46,1.68,16.67,0.05],0,"st1",0]"#}});
+
+        let component = build_component_from_payload(&payload, "TEST/INDUCTOR").unwrap();
+        let left = component
+            .pins
+            .iter()
+            .find(|pin| pin.designator == "1")
+            .unwrap();
+        let right = component
+            .pins
+            .iter()
+            .find(|pin| pin.designator == "2")
+            .unwrap();
+
+        assert_eq!(left.orientation, 2);
+        assert_eq!(right.orientation, 0);
+        assert_eq!(left.location.x_raw, common::raw_from_symbol_units(-16.88));
+        assert_eq!(right.location.x_raw, common::raw_from_symbol_units(16.67));
+        assert_eq!(
+            left.length_raw,
+            common::raw_from_symbol_units(super::MIN_INDUCTOR_PIN_LENGTH_UNITS)
+        );
+        assert_eq!(
+            right.length_raw,
+            common::raw_from_symbol_units(super::MIN_INDUCTOR_PIN_LENGTH_UNITS)
+        );
     }
 
     #[test]

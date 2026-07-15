@@ -1077,6 +1077,16 @@ pub fn write_schlib_library(components: &[Component], output_path: &Path) -> Res
     Ok(())
 }
 
+impl Component {
+    pub(crate) fn schlib_name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn schlib_data_bytes(&self) -> Vec<u8> {
+        component_data_bytes(self)
+    }
+}
+
 fn collect_sections<'a>(components: &'a [Component]) -> Vec<(&'a Component, String)> {
     let mut used = HashSet::new();
     components

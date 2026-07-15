@@ -8,7 +8,7 @@ use cfb::CompoundFile;
 use encoding_rs::WINDOWS_1252;
 
 use super::pcblib::{PcbLibrary, write_pcblib};
-use super::schlib::{Component, write_schlib_library};
+use super::schlib::Component;
 use crate::error::{AppError, Result};
 
 const PCBLIB_LIBRARY_DATA_TEMPLATE: &str = include_str!("pcblib_library_data_template.txt");
@@ -46,16 +46,10 @@ pub(crate) struct PcblibRecordLibrary {
 }
 
 pub(crate) fn schlib_record_from_component(component: &Component) -> Result<SchlibRecord> {
-    let path = temp_path("npnp_schlib_record", "SchLib");
-    let result = (|| {
-        write_schlib_library(std::slice::from_ref(component), &path)?;
-        let mut records = read_schlib_records(&path)?;
-        records.pop().ok_or_else(|| {
-            AppError::Other("failed to capture temporary SchLib component".to_string())
-        })
-    })();
-    fs::remove_file(&path).ok();
-    result
+    parse_schlib_record(
+        component.schlib_name().to_string(),
+        component.schlib_data_bytes(),
+    )
 }
 
 pub(crate) fn pcblib_records_from_library(library: &PcbLibrary) -> Result<PcblibRecordLibrary> {

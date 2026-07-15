@@ -5,8 +5,6 @@
 </p>
 
 <p align="center">
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/version-1.0.2-e05d44?style=flat-square" alt="version 1.0.2"></a>
-  <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/license-Apache--2.0-f08c5a?style=flat-square" alt="license Apache 2.0"></a>
   <a href=".github/workflows/release.yml"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2ea44f?style=flat-square" alt="platform Windows macOS Linux"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-edition%202024-f28d1a?style=flat-square" alt="rust edition 2024"></a>
 </p>
@@ -77,16 +75,6 @@ KiCad library previews:
   <img src="imgs/kicad_3dmodel.png" alt="KiCad 3D model preview" width="32%">
 </p>
 
-## Pull requests
-
-Pull requests are welcome.
-
-- Chinese and English are both welcome in issues and pull requests.
-- Please keep changes focused and explain what problem the PR solves.
-- For exporter changes, include the component ID or fixture used for testing when possible.
-- If the change affects generated `.SchLib` or `.PcbLib` output, please visually check the result before submitting.
-- For larger changes, opening an issue first is recommended so the scope can be discussed.
-
 ## Downloads
 
 Tagged releases build native `npnp` CLI archives for:
@@ -120,8 +108,3 @@ Useful shared flags:
 - `--library-name`: set the merged Altium library name or KiCad library base name.
 - Altium `--merge` creates a new merged library and refuses to overwrite an existing one. Use `--merge --append` to add components to an existing merged library.
 
-## GUI
-
-Another easy way is to use [`SeEx`](https://github.com/linkyourbin/seex). It is strongly recommended for day-to-day batch export.
-
-I also made a showcase video on bilibili: [【工具分享】你应该把时间花费在电路设计和 Layout 上，而不是机械重复的绘制原理图和封装](https://www.bilibili.com/video/BV1bEEE6mEHd)

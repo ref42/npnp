@@ -5,8 +5,6 @@
 </p>
 
 <p align="center">
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/version-1.0.2-e05d44?style=flat-square" alt="version 1.0.2"></a>
-  <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/license-Apache--2.0-f08c5a?style=flat-square" alt="license Apache 2.0"></a>
   <a href=".github/workflows/release.yml"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2ea44f?style=flat-square" alt="platform Windows macOS Linux"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-edition%202024-f28d1a?style=flat-square" alt="rust edition 2024"></a>
 </p>
@@ -77,16 +75,6 @@ KiCad 库预览：
   <img src="imgs/kicad_3dmodel.png" alt="KiCad 3D model preview" width="32%">
 </p>
 
-## Pull requests
-
-欢迎提交 Pull Request。
-
-- Issue 和 Pull Request 均欢迎使用中文或英文。
-- 请尽量保持改动聚焦，并说明 PR 解决的问题。
-- 如果修改导出器，建议附上用于测试的器件编号或 fixture。
-- 如果改动会影响生成的 `.SchLib` 或 `.PcbLib`，请在提交前目检生成结果。
-- 较大的改动建议先开 issue 讨论范围。
-
 ## 下载
 
 每个 tag release 会构建这些原生 `npnp` CLI 压缩包：
@@ -119,12 +107,6 @@ npnp kicad batch --input ids.txt --output generated\kicad --library-name MyParts
 - `--english-metadata`：优先使用英文元数据；如果缺失，则自动回退到源数据中的元数据。
 - `--library-name`：设置 Altium 合并库名称或 KiCad 库基础名称。
 - Altium `--merge` 只创建新的合并库，不会覆盖已有同名库；要给已有合并库追加元件，请使用 `--merge --append`。
-
-## GUI
-
-另一种更简单的方式是使用 [`SeEx`](https://github.com/linkyourbin/seex)，日常批量导出更推荐使用 GUI。
-
-如果你不知道如何使用 `SeEx`，我也做了一个 bilibili 演示视频：[【工具分享】你应该把时间花费在电路设计和 Layout 上，而不是机械重复的绘制原理图和封装](https://www.bilibili.com/video/BV1bEEE6mEHd)
 
 ## 注意
 

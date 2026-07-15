@@ -3,13 +3,13 @@ name = "npnp"
 version = "1.0.4"
 edition = "2024"
 autobins = false
-authors = ["linkyourbin"]
+authors = ["ref42"]
 description = "Normalize Pin Net Pad (npnp): pure Rust LCEDA/EasyEDA downloader and Altium/KiCad library exporter"
 readme = "README.md"
 license = "Apache-2.0"
-repository = "https://github.com/linkyourbin/npnp"
+repository = "https://github.com/ref42/npnp"
 documentation = "https://docs.rs/npnp"
-keywords = ["altium", "easyeda", "lcsc", "electronics", "eda"]
+keywords = ["altium", "easyeda", "lcsc", "electronics", "eda", "kicad"]
 categories = ["command-line-utilities"]
 include = [
     "Cargo.lock",
@@ -34,12 +34,12 @@ path = "src/main.rs"
 [dependencies]
 encoding_rs = "0.8.35"
 cfb = "0.14.0"
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 futures-util = "0.3.32"
-log = "0.4.29"
-regex = "1.12.3"
-reqwest = { version = "0.13.2", features = ["json", "stream"] }
+log = "0.4.33"
+regex = "1.13.0"
+reqwest = { version = "0.13.4", features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 thiserror = "2.0.18"
-tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync", "time"] }

@@ -76,7 +76,7 @@ jobs:
           $name = "npnp-$tag-${{ matrix.asset_suffix }}"
           New-Item -ItemType Directory -Path "dist\$name" -Force
           Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary }}" "dist\$name\"
-          Copy-Item README.md, LICENSE-APACHE "dist\$name\"
+          Copy-Item README.md, LICENSE "dist\$name\"
           $asset = "$name.${{ matrix.archive }}"
           Compress-Archive -Path "dist\$name\*" -DestinationPath $asset -Force
           "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -90,7 +90,7 @@ jobs:
           name="npnp-$tag-${{ matrix.asset_suffix }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/$name/"
-          cp README.md LICENSE-APACHE "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
           asset="$name.${{ matrix.archive }}"
           tar -czf "$asset" -C dist "$name"
           echo "ASSET=$asset" >> "$GITHUB_ENV"

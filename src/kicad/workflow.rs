@@ -1,5 +1,9 @@
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -7,8 +11,8 @@ use tokio::task::JoinSet;
 use crate::easyeda::{ComponentData, EasyedaApi};
 use crate::error::{AppError, EasyedaError, Result};
 use crate::kicad::{
-    KicadExportOptions, KicadLibraryOptions, LibraryManager, ModelStageStatus, convert_3d_model,
-    convert_footprint, convert_symbol,
+    KicadExportOptions, KicadLibraryOptions, LibraryManager, ModelExportStatus, ModelStageStatus,
+    convert_3d_model, convert_footprint, convert_symbol,
 };
 use crate::lcsc::LcscClient;
 use crate::metadata::ResolvedMetadata;
@@ -34,18 +38,60 @@ pub struct KicadBatchOptions {
 #[derive(Debug, Clone)]
 pub struct KicadBatchSummary {
     pub total: usize,
+    pub skipped: usize,
     pub success: usize,
     pub failed: usize,
     pub failed_ids: Vec<String>,
     pub failure_details: Vec<String>,
     pub generated_files: Vec<PathBuf>,
     pub output: PathBuf,
+    pub timings: KicadStageTimings,
+    pub models: KicadModelSummary,
 }
 
 #[derive(Debug, Clone)]
 pub struct KicadExportedComponent {
     pub lcsc_id: String,
     pub component_name: String,
+    pub timings: KicadStageTimings,
+    pub model: Option<ModelExportStatus>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KicadStageTimings {
+    pub component_fetch: Duration,
+    pub metadata: Duration,
+    pub symbol: Duration,
+    pub footprint: Duration,
+    pub model_3d: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KicadModelSummary {
+    pub written: usize,
+    pub skipped: usize,
+    pub missing: usize,
+}
+
+impl KicadStageTimings {
+    fn add(&mut self, other: Self) {
+        self.component_fetch += other.component_fetch;
+        self.metadata += other.metadata;
+        self.symbol += other.symbol;
+        self.footprint += other.footprint;
+        self.model_3d += other.model_3d;
+    }
+}
+
+impl KicadModelSummary {
+    fn record(&mut self, status: Option<ModelExportStatus>) {
+        match status {
+            Some(ModelExportStatus::Written) => self.written += 1,
+            Some(ModelExportStatus::Skipped) => self.skipped += 1,
+            Some(ModelExportStatus::Missing) => self.missing += 1,
+            None => {}
+        }
+    }
 }
 
 pub async fn export_kicad_single(options: KicadSingleOptions) -> Result<KicadBatchSummary> {
@@ -70,16 +116,37 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
 
     let model_status = Arc::new(ModelStageStatus::new());
     let export_options = Arc::new(options.export.clone());
-    let ids = options.ids.clone();
+    let checkpoint_path = kicad_checkpoint_path(&options.library.output, &options.export);
+    let completed = if options.export.force {
+        HashSet::new()
+    } else {
+        load_checkpoint(&checkpoint_path)?
+    };
+    let mut ids = Vec::new();
+    let mut skipped = 0usize;
+    for id in options.ids.clone() {
+        if completed.contains(&normalize_checkpoint_id(&id)) {
+            skipped += 1;
+        } else {
+            ids.push(id);
+        }
+    }
     let mut summary = KicadBatchSummary {
-        total: ids.len(),
+        total: ids.len() + skipped,
+        skipped,
         success: 0,
         failed: 0,
         failed_ids: Vec::new(),
         failure_details: Vec::new(),
         generated_files: generated_files_for(&manager, &options.export),
         output: options.library.output.clone(),
+        timings: KicadStageTimings::default(),
+        models: KicadModelSummary::default(),
     };
+
+    if ids.is_empty() {
+        return Ok(summary);
+    }
 
     let parallel = options.parallel.max(1).min(ids.len().max(1));
     let semaphore = Arc::new(Semaphore::new(parallel));
@@ -113,8 +180,11 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     let mut first_error = None;
     while let Some(joined) = join_set.join_next().await {
         match joined {
-            Ok((_, Ok(_exported))) => {
+            Ok((id, Ok(exported))) => {
+                append_checkpoint(&checkpoint_path, &id)?;
                 summary.success += 1;
+                summary.timings.add(exported.timings);
+                summary.models.record(exported.model);
             }
             Ok((id, Err(err))) => {
                 summary.failed += 1;
@@ -137,13 +207,52 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     if summary.failed > 0 && !options.continue_on_error {
         return Err(first_error.unwrap_or_else(|| AppError::Other("KiCad export failed".into())));
     }
-    if summary.success == 0 {
+    if summary.success == 0 && summary.skipped == 0 {
         return Err(first_error.unwrap_or_else(|| {
             AppError::Other("no KiCad components exported successfully".to_string())
         }));
     }
 
     Ok(summary)
+}
+
+fn kicad_checkpoint_path(output: &Path, options: &KicadExportOptions) -> PathBuf {
+    let mut key = Vec::new();
+    if options.full || options.symbol {
+        key.push("symbol");
+    }
+    if options.full || options.footprint {
+        key.push("footprint");
+    }
+    if options.full || options.model_3d {
+        key.push("3d");
+    }
+    output.join(format!(".kicad_checkpoint_{}", key.join("_")))
+}
+
+fn load_checkpoint(path: &Path) -> Result<HashSet<String>> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(content
+            .lines()
+            .map(normalize_checkpoint_id)
+            .filter(|line| !line.is_empty())
+            .collect()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(HashSet::new()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn append_checkpoint(path: &Path, id: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(file, "{}", normalize_checkpoint_id(id))?;
+    Ok(())
+}
+
+fn normalize_checkpoint_id(id: &str) -> String {
+    id.trim().to_ascii_uppercase()
 }
 
 async fn export_one_kicad_component(
@@ -155,30 +264,48 @@ async fn export_one_kicad_component(
     lcsc_id: &str,
 ) -> Result<KicadExportedComponent> {
     validate_lcsc_id(lcsc_id)?;
+    let mut timings = KicadStageTimings::default();
+
+    let started = Instant::now();
     let mut component_data = api.get_component_data(lcsc_id).await?;
+    timings.component_fetch = started.elapsed();
+
+    let started = Instant::now();
     apply_requested_metadata(&mut component_data, lcsc_client).await;
+    timings.metadata = started.elapsed();
 
     if options.targets_symbol() {
+        let started = Instant::now();
         convert_symbol(options, &component_data, manager, lcsc_id)?;
+        timings.symbol = started.elapsed();
     }
     if options.targets_footprint() {
+        let started = Instant::now();
         convert_footprint(options, &component_data, manager, lcsc_id)?;
+        timings.footprint = started.elapsed();
     }
+    let mut model = None;
     if options.targets_model_3d() {
-        convert_3d_model(
-            options,
-            api,
-            &component_data,
-            manager,
-            lcsc_id,
-            model_status,
-        )
-        .await?;
+        let started = Instant::now();
+        model = Some(
+            convert_3d_model(
+                options,
+                api,
+                &component_data,
+                manager,
+                lcsc_id,
+                model_status,
+            )
+            .await?,
+        );
+        timings.model_3d = started.elapsed();
     }
 
     Ok(KicadExportedComponent {
         lcsc_id: lcsc_id.to_string(),
         component_name: component_data.title,
+        timings,
+        model,
     })
 }
 

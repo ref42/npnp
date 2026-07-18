@@ -130,12 +130,12 @@ jobs:
             container: archlinux:latest
             target: x86_64-unknown-linux-gnu
             asset_suffix: arch-x86_64
-            install: pacman -Syu --noconfirm --needed git ca-certificates base-devel rust cargo pkgconf openssl
+            install: grep -q '^DisableSandbox' /etc/pacman.conf || printf '\nDisableSandbox\n' >> /etc/pacman.conf; pacman -Syu --noconfirm --needed git ca-certificates base-devel rust cargo pkgconf openssl
           - os: ubuntu-26.04-arm
             container: menci/archlinuxarm:base-devel
             target: aarch64-unknown-linux-gnu
             asset_suffix: arch-aarch64
-            install: pacman-key --init && pacman-key --populate archlinuxarm && pacman -Syu --noconfirm --needed git ca-certificates rust cargo pkgconf openssl
+            install: grep -q '^DisableSandbox' /etc/pacman.conf || printf '\nDisableSandbox\n' >> /etc/pacman.conf; pacman-key --init && pacman-key --populate archlinuxarm && pacman -Syu --noconfirm --needed git ca-certificates rust cargo pkgconf openssl
 
     steps:
       - name: Checkout

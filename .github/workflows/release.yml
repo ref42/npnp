@@ -25,27 +25,32 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2025-vs2026
             target: x86_64-pc-windows-msvc
             asset_suffix: windows-x86_64
             binary: npnp.exe
             archive: zip
-          - os: ubuntu-latest
+          - os: windows-11-vs2026-arm
+            target: aarch64-pc-windows-msvc
+            asset_suffix: windows-aarch64
+            binary: npnp.exe
+            archive: zip
+          - os: ubuntu-26.04
             target: x86_64-unknown-linux-gnu
             asset_suffix: linux-x86_64
             binary: npnp
             archive: tar.gz
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-26.04-arm
             target: aarch64-unknown-linux-gnu
             asset_suffix: linux-aarch64
             binary: npnp
             archive: tar.gz
-          - os: macos-15-intel
+          - os: macos-26-intel
             target: x86_64-apple-darwin
             asset_suffix: macos-x86_64
             binary: npnp
             archive: tar.gz
-          - os: macos-14
+          - os: macos-26
             target: aarch64-apple-darwin
             asset_suffix: macos-aarch64
             binary: npnp
@@ -101,10 +106,77 @@ jobs:
           name: npnp-${{ env.RELEASE_TAG }}-${{ matrix.asset_suffix }}
           path: ${{ env.ASSET }}
 
+  build-linux-distro:
+    name: build ${{ matrix.asset_suffix }}
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+      CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-26.04
+            container: fedora:latest
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: fedora-x86_64
+            install: dnf install -y git ca-certificates rust cargo gcc gcc-c++ make pkgconf-pkg-config openssl-devel
+          - os: ubuntu-26.04-arm
+            container: fedora:latest
+            target: aarch64-unknown-linux-gnu
+            asset_suffix: fedora-aarch64
+            install: dnf install -y git ca-certificates rust cargo gcc gcc-c++ make pkgconf-pkg-config openssl-devel
+          - os: ubuntu-26.04
+            container: archlinux:latest
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: arch-x86_64
+            install: pacman -Syu --noconfirm --needed git ca-certificates base-devel rust cargo pkgconf openssl
+          - os: ubuntu-26.04-arm
+            container: archlinux:latest
+            target: aarch64-unknown-linux-gnu
+            asset_suffix: arch-aarch64
+            install: pacman -Syu --noconfirm --needed git ca-certificates base-devel rust cargo pkgconf openssl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Build in distro container
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          asset_suffix="${{ matrix.asset_suffix }}"
+          target="${{ matrix.target }}"
+          container="${{ matrix.container }}"
+          name="npnp-$tag-$asset_suffix"
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            -e CARGO_TARGET_DIR="target/$asset_suffix" \
+            -e RELEASE_TAG="$tag" \
+            -e ASSET_SUFFIX="$asset_suffix" \
+            -e PACKAGE_NAME="$name" \
+            -e TARGET="$target" \
+            "$container" \
+            bash -lc '${{ matrix.install }} && cargo test --locked --target "$TARGET" && cargo build --release --locked --target "$TARGET" --bin npnp && mkdir -p "dist/$ASSET_SUFFIX/$PACKAGE_NAME" && cp "target/$ASSET_SUFFIX/$TARGET/release/npnp" "dist/$ASSET_SUFFIX/$PACKAGE_NAME/" && cp README.md LICENSE "dist/$ASSET_SUFFIX/$PACKAGE_NAME/"'
+          tar -czf "$name.tar.gz" -C "dist/$asset_suffix" "$name"
+          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npnp-${{ env.RELEASE_TAG }}-${{ matrix.asset_suffix }}
+          path: ${{ env.ASSET }}
+
   release:
     name: publish release assets
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - build
+      - build-linux-distro
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}

@@ -15,8 +15,8 @@ const STEP_DOWNLOAD_TOTAL_TIMEOUT_SECS: u64 = 60;
 const STEP_DOWNLOAD_STALL_TIMEOUT_SECS: u64 = 20;
 const UPSTREAM_BLOCK_RETRY_DELAY_MS: u64 = 10_000;
 const UPSTREAM_BLOCK_COOLDOWN_MS: u64 = 45_000;
-const COMPONENT_REQUEST_INTERVAL_MS: u64 = 750;
-const MODEL_REQUEST_INTERVAL_MS: u64 = 500;
+const COMPONENT_REQUEST_INTERVAL_MS: u64 = 150;
+const MODEL_REQUEST_INTERVAL_MS: u64 = 150;
 type DownloadCell = Arc<OnceCell<std::result::Result<Arc<Vec<u8>>, String>>>;
 type DownloadCache = Arc<Mutex<HashMap<String, DownloadCell>>>;
 
@@ -24,8 +24,6 @@ pub struct EasyedaApi {
     client: Client,
     model_client: Client,
     step_cache: DownloadCache,
-    component_request_lock: Arc<Mutex<()>>,
-    model_download_lock: Arc<Mutex<()>>,
     component_gate: Arc<Mutex<RequestGate>>,
     model_gate: Arc<Mutex<RequestGate>>,
 }
@@ -63,8 +61,6 @@ impl EasyedaApi {
                 .build()
                 .expect("Failed to create model HTTP client"),
             step_cache: Arc::new(Mutex::new(HashMap::new())),
-            component_request_lock: Arc::new(Mutex::new(())),
-            model_download_lock: Arc::new(Mutex::new(())),
             component_gate: Arc::new(Mutex::new(RequestGate::new())),
             model_gate: Arc::new(Mutex::new(RequestGate::new())),
         }
@@ -96,7 +92,6 @@ impl EasyedaApi {
     }
 
     async fn get_component_data_once(&self, lcsc_id: &str) -> Result<ComponentData> {
-        let _request_lock = self.component_request_lock.lock().await;
         wait_for_request_slot(
             &self.component_gate,
             Duration::from_millis(COMPONENT_REQUEST_INTERVAL_MS),
@@ -439,7 +434,6 @@ impl EasyedaApi {
         model_type: &str,
         uuid: &str,
     ) -> Result<Vec<u8>> {
-        let _download_lock = self.model_download_lock.lock().await;
         for attempt in 1..=STEP_DOWNLOAD_ATTEMPTS {
             log::info!(
                 "Downloading 3D {} model: {}{}",

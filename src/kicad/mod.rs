@@ -20,7 +20,7 @@ pub use footprint_converter::convert_footprint;
 pub use footprint_exporter::FootprintExporter;
 pub use layers::*;
 pub use library::{FileWriteStatus, LibraryManager, SymbolWriteStatus};
-pub use model_converter::{ModelStageStatus, convert_3d_model};
+pub use model_converter::{ModelExportStatus, ModelStageStatus, convert_3d_model};
 pub use options::{KicadExportOptions, KicadLibraryOptions};
 pub use symbol::KiArc as SymbolKiArc;
 pub use symbol::KiText as SymbolKiText;

@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::path::Path;
+use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
 
@@ -344,8 +345,8 @@ fn print_altium_summary(summary: &crate::batch::BatchSummary) {
 
 fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatchSummary) {
     println!(
-        "{label}. Total: {} | Success: {} | Failed: {}",
-        summary.total, summary.success, summary.failed
+        "{label}. Total: {} | Skipped: {} | Success: {} | Failed: {}",
+        summary.total, summary.skipped, summary.success, summary.failed
     );
     if !summary.failed_ids.is_empty() {
         println!("Failed IDs: {}", summary.failed_ids.join(", "));
@@ -356,17 +357,43 @@ fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatch
             println!("  {detail}");
         }
     }
+    println!(
+        "Stage totals: fetch {} | metadata {} | symbol {} | footprint {} | 3d {}",
+        format_duration(summary.timings.component_fetch),
+        format_duration(summary.timings.metadata),
+        format_duration(summary.timings.symbol),
+        format_duration(summary.timings.footprint),
+        format_duration(summary.timings.model_3d)
+    );
+    println!(
+        "3D models: written {} | skipped {} | missing {}",
+        summary.models.written, summary.models.skipped, summary.models.missing
+    );
     for path in &summary.generated_files {
         println!("Generated: {}", path.display());
     }
     println!("Output directory: {}", summary.output.display());
 }
 
+fn format_duration(duration: Duration) -> String {
+    let total_ms = duration.as_millis();
+    if total_ms < 60_000 {
+        return format!("{}.{:02}s", total_ms / 1_000, (total_ms % 1_000) / 10);
+    }
+
+    let total_secs = duration.as_secs();
+    let hours = total_secs / 3_600;
+    let minutes = (total_secs % 3_600) / 60;
+    let seconds = total_secs % 60;
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
 fn display_invocation_name(raw: &OsStr) -> String {
-    let file_name = Path::new(raw)
-        .file_name()
-        .unwrap_or(raw)
-        .to_string_lossy();
+    let file_name = Path::new(raw).file_name().unwrap_or(raw).to_string_lossy();
     let leaf = file_name.rsplit(['/', '\\']).next().unwrap_or(&file_name);
 
     Path::new(leaf)

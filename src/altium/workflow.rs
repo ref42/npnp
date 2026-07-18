@@ -181,7 +181,7 @@ async fn load_step_bytes_for_pcblib(
     None
 }
 
-async fn build_pcblib_library_from_detail(
+pub(crate) async fn build_pcblib_library_from_detail(
     client: &LcedaClient,
     item: &SearchItem,
     footprint_data: &Value,
@@ -191,7 +191,7 @@ async fn build_pcblib_library_from_detail(
     build_pcblib_from_payload(footprint_data, component_name, step_bytes.as_deref())
 }
 
-fn build_schlib_component_from_detail(
+pub(crate) fn build_schlib_component_from_detail(
     item: &SearchItem,
     symbol_data: &Value,
     component_name: &str,

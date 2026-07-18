@@ -14,6 +14,13 @@ pub struct ModelStageStatus {
     active_steps: Mutex<HashMap<String, Instant>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelExportStatus {
+    Missing,
+    Skipped,
+    Written,
+}
+
 impl ModelStageStatus {
     pub fn new() -> Self {
         Self::default()
@@ -60,10 +67,10 @@ pub async fn convert_3d_model(
     lib_manager: &LibraryManager,
     lcsc_id: &str,
     model_status: &ModelStageStatus,
-) -> Result<()> {
+) -> Result<ModelExportStatus> {
     let Some(model_info) = &component_data.model_3d else {
         log::warn!("No 3D model metadata available for this component");
-        return Ok(());
+        return Ok(ModelExportStatus::Missing);
     };
 
     let model_name = format!("{}_{}", sanitize_name(&model_info.title), lcsc_id);
@@ -72,7 +79,7 @@ pub async fn convert_3d_model(
 
     if !need_step {
         log::debug!("Skipped existing STEP model: {}", model_name);
-        return Ok(());
+        return Ok(ModelExportStatus::Skipped);
     }
 
     model_status.start_step(lcsc_id);
@@ -101,7 +108,7 @@ pub async fn convert_3d_model(
             }
             lib_manager.write_step_model(&model_name, &sanitized_step_data)?;
             log::debug!("Wrote STEP model: {}", model_name);
-            Ok(())
+            Ok(ModelExportStatus::Written)
         }
         Err(e) => Err(e),
     }

@@ -58,7 +58,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.CHECKOUT_REF }}
 
@@ -101,7 +101,7 @@ jobs:
           echo "ASSET=$asset" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npnp-${{ env.RELEASE_TAG }}-${{ matrix.asset_suffix }}
           path: ${{ env.ASSET }}
@@ -139,7 +139,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.CHECKOUT_REF }}
 
@@ -166,7 +166,7 @@ jobs:
           echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npnp-${{ env.RELEASE_TAG }}-${{ matrix.asset_suffix }}
           path: ${{ env.ASSET }}
@@ -183,13 +183,13 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*

@@ -3,3 +3,8 @@
 /compare
 /pcblib
 /schlib
+/assets
+/imgs
+/src
+Cargo.lock
+/tests

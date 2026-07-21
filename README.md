@@ -1,5 +1,10 @@
 # npnp
 
+<div align="center">
+<img src="assets/npnp.png" alt="npnp">
+</div>
+
+
 Normalize Pin Net Pad.
 
 `npnp` is distributed here as binary releases for EDA library export workflows.

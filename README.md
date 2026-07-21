@@ -1,7 +1,7 @@
 # npnp
 
 <div align="center">
-<img src="assets/npnp.png" alt="npnp">
+<img src="assets/npnp.png" width="600" alt="npnp">
 </div>
 
 

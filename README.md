@@ -75,20 +75,6 @@ KiCad library previews:
   <img src="imgs/kicad_3dmodel.png" alt="KiCad 3D model preview" width="32%">
 </p>
 
-## Downloads
-
-Tagged releases build native `npnp` CLI archives for:
-
-- Windows x86_64: `npnp-vX.Y.Z-windows-x86_64.zip`
-- Windows ARM64: `npnp-vX.Y.Z-windows-aarch64.zip`
-- Linux x86_64: `npnp-vX.Y.Z-linux-x86_64.tar.gz`
-- Linux ARM64: `npnp-vX.Y.Z-linux-aarch64.tar.gz`
-- Fedora x86_64: `npnp-vX.Y.Z-fedora-x86_64.tar.gz`
-- Fedora ARM64: `npnp-vX.Y.Z-fedora-aarch64.tar.gz`
-- Arch Linux x86_64: `npnp-vX.Y.Z-arch-x86_64.tar.gz`
-- Arch Linux ARM64: `npnp-vX.Y.Z-arch-aarch64.tar.gz`
-- macOS Intel: `npnp-vX.Y.Z-macos-x86_64.tar.gz`
-- macOS Apple Silicon: `npnp-vX.Y.Z-macos-aarch64.tar.gz`
 
 ## CLI
 

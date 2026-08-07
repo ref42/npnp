@@ -23,6 +23,14 @@ include = [
     "tests/**",
 ]
 
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
+
 [lib]
 name = "npnp"
 path = "src/lib.rs"

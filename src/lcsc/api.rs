@@ -18,7 +18,7 @@ impl LcscClient {
     pub fn new() -> Self {
         let client = Client::builder()
             .user_agent(format!(
-                "npnp/{} (+https://github.com/linkyourbin/npnp)",
+                "npnp/{} (+https://github.com/ref42/npnp)",
                 env!("CARGO_PKG_VERSION")
             ))
             .connect_timeout(Duration::from_secs(5))

@@ -1,20 +1,131 @@
-Copyright © Ref42. All rights reserved.
+npnp Non-Commercial Share-Alike License
+Version 1.0
 
-Permission is granted to use this software solely for its intended
-purpose, subject to the following restrictions.
+Copyright (c) 2026 Ref42. All rights reserved.
 
-You may not copy, reproduce, redistribute, sublicense, sell, modify,
-adapt, translate, reverse engineer, decompile, disassemble, create
-derivative works from, or fork this software or any portion of it.
+1. Permission
 
-No ownership or intellectual-property rights are transferred to you.
-All rights not expressly granted are reserved by the copyright owner.
+Permission is granted to use, copy, study, modify, and distribute this
+software and its source code solely for non-commercial purposes, provided
+that all conditions in this license are followed.
 
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, TO THE
-MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW.
+2. Non-commercial use only
 
-版权 © Ref42 保留所有权利。
-兹授予使用者仅可为本软件预设用途使用本软件的许可，同时须遵守以下限制条款：
-禁止对本软件及其任何组成部分进行复制、复刻、再分发、转授权、出售、修改、改编、翻译、逆向工程、反编译、反汇编、制作衍生作品或分支复刻。
-本软件不向您转让任何所有权及知识产权。凡本条款未明确授予您的一切权利，均归版权所有人保留。
-本软件按 “现状” 提供，依据适用法律允许的最大范围，不附带任何形式的保证。
+Commercial use is prohibited without prior written permission from Ref42.
+Commercial use includes, but is not limited to:
+
+- selling or licensing the software or a modified version;
+- including the software in a paid product or service;
+- using the software to provide a paid service, hosted service, or consulting
+  service;
+- bundling the software with commercial hardware or software; and
+- using the software in an organization for a commercial purpose.
+
+3. Attribution
+
+Every copy, distribution, or modified version must clearly credit the
+original project and copyright holder in a reasonable location. The credit
+must include "npnp by Ref42" and a link to the original project repository:
+
+https://github.com/ref42/npnp
+
+Copyright notices, this license, and existing attribution notices must be
+preserved in source distributions and documentation.
+
+4. Share-alike and source availability
+
+If you distribute a modified version, you must:
+
+- make the complete corresponding source code available to recipients;
+- identify the significant changes made to the original project; and
+- distribute the modified version under this same license.
+
+If you distribute a binary version of a modified work, you must provide the
+corresponding source code and this license at no additional charge and in a
+reasonable manner.
+
+5. Contributions
+
+You may submit modifications and contributions to the original project for
+consideration. Unless a separate written agreement states otherwise, each
+contributor grants Ref42 a perpetual, worldwide, non-exclusive, royalty-free
+license to use, reproduce, modify, publish, distribute, and sublicense that
+contribution as part of npnp under this license or another license chosen by
+Ref42.
+
+6. Restrictions
+
+You may not remove or obscure attribution, copyright, or license notices. No
+trademark rights, patent rights, or other intellectual-property rights are
+granted except for the limited copyright permissions expressly stated here.
+
+7. Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+REF42 OR THE CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+8. Termination
+
+Any rights granted under this license terminate automatically if you violate
+these terms. Rights may be reinstated only by written permission from Ref42.
+
+
+============================================================
+npnp 非商业性相同方式共享许可证
+版本 1.0
+
+版权所有 (c) 2026 Ref42。保留所有权利。
+
+1. 授权
+
+在遵守本许可证全部条款的前提下，特此授予您仅为非商业目的使用、复制、研究、修改和分发本软件及其源代码的许可。
+
+2. 仅限非商业使用
+
+未经 Ref42 事先书面许可，禁止商业使用。
+商业使用包括但不限于：
+
+- 出售或授权本软件或其修改版本；
+- 将本软件加入付费产品或服务；
+- 使用本软件提供付费服务、托管服务或咨询服务；
+- 将本软件与商业硬件或软件捆绑分发；以及
+- 在组织的商业目的中使用本软件。
+
+3. 署名
+
+每一份副本、分发版本或修改版本都必须在合理位置明确标明原始项目和版权所有者。署名必须包含“npnp by Ref42”以及原始项目仓库链接：
+
+https://github.com/ref42/npnp
+
+源代码分发和文档中必须保留版权声明、本许可证以及已有的署名声明。
+
+4. 相同方式共享和源代码提供
+
+如果您分发修改版本，必须：
+
+- 向接收者提供完整的对应源代码；
+- 说明相对于原始项目所作的重要修改；以及
+- 使用本许可证分发修改版本。
+
+如果您分发修改作品的二进制版本，必须以合理方式免费提供对应源代码和本许可证。
+
+5. 贡献
+
+您可以向原始项目提交修改和代码贡献，供项目维护者考虑。除非另有书面协议，每位贡献者均授予 Ref42 一项永久、全球范围、非独占、免版税的许可，允许 Ref42 将该贡献作为 npnp 的一部分使用、复制、修改、发布、分发，并在本许可证或 Ref42 选择的其他许可证下进行再授权。
+
+6. 限制
+
+您不得删除或掩盖署名、版权或许可证声明。除本许可证明确授予的有限版权许可外，本许可证不授予任何商标权、专利权或其他知识产权。
+
+7. 免责声明
+
+本软件按“现状”提供，不附带任何明示或默示的保证，包括但不限于适销性、特定用途适用性和不侵权保证。在任何情况下，无论基于合同、侵权或其他原因，对于因本软件或其使用或其他交易而产生的任何索赔、损害或其他责任，Ref42或贡献者均不承担责任。
+
+8. 终止
+
+如果您违反本许可证条款，本许可证授予的所有权利将自动终止。只有在获得 Ref42 书面许可后，相关权利才可能恢复。

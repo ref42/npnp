@@ -182,6 +182,13 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          sparse-checkout: .github/release_notes
+          sparse-checkout-cone-mode: true
+
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -193,4 +200,4 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
-          generate_release_notes: true
+          body_path: .github/release_notes/${{ env.RELEASE_TAG }}.md

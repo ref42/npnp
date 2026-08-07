@@ -1,5 +1,4 @@
 use super::converter::sanitize_name;
-use super::step_sanitizer::sanitize_step_model;
 use crate::easyeda::{ComponentData, EasyedaApi};
 use crate::error::Result;
 use crate::kicad::{KicadExportOptions, LibraryManager};
@@ -88,25 +87,7 @@ pub async fn convert_3d_model(
 
     match result {
         Ok(step_data) => {
-            let (sanitized_step_data, stats) = sanitize_step_model(&step_data)?;
-            if stats.removed_solids > 0 || stats.restyled_faces > 0 {
-                let mut details = Vec::new();
-                if stats.removed_solids > 0 {
-                    details.push(format!("{} shallow top solids", stats.removed_solids));
-                }
-                if stats.restyled_faces > 0 {
-                    details.push(format!(
-                        "{} styled faces across {} logo groups",
-                        stats.restyled_faces, stats.restyled_groups
-                    ));
-                }
-                log::info!(
-                    "Removed {} from STEP model {}",
-                    details.join(" and "),
-                    model_name
-                );
-            }
-            lib_manager.write_step_model(&model_name, &sanitized_step_data)?;
+            lib_manager.write_step_model(&model_name, &step_data)?;
             log::debug!("Wrote STEP model: {}", model_name);
             Ok(ModelExportStatus::Written)
         }
@@ -115,7 +96,7 @@ pub async fn convert_3d_model(
 }
 
 fn decrement(counter: &AtomicUsize) {
-    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+    let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         Some(value.saturating_sub(1))
     });
 }

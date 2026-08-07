@@ -9,7 +9,7 @@ readme = "README.md"
 license-file = "LICENSE"
 repository = "https://github.com/ref42/npnp"
 documentation = "https://docs.rs/npnp"
-keywords = ["altium", "easyeda", "lcsc", "electronics", "eda", "kicad"]
+keywords = ["altium", "easyeda", "lcsc", "eda", "kicad"]
 categories = ["command-line-utilities"]
 include = [
     "Cargo.lock",

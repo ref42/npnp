@@ -113,8 +113,7 @@ fn symbol_payload_from_component(data: &ComponentData) -> Value {
         1,
     );
 
-    let mut owner_part_id = 2;
-    for part in &data.symbol_parts {
+    for (owner_part_id, part) in (2..).zip(data.symbol_parts.iter()) {
         push_symbol_rows(
             &mut rows,
             part.title.as_str(),
@@ -123,7 +122,6 @@ fn symbol_payload_from_component(data: &ComponentData) -> Value {
             part.bbox_y,
             owner_part_id,
         );
-        owner_part_id += 1;
     }
 
     json!({

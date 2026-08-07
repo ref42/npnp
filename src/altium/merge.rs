@@ -116,7 +116,7 @@ pub(crate) fn write_schlib_records(records: &[SchlibRecord], output_path: &Path)
         )?;
     }
     for (record, section_key) in records.iter().zip(sections.iter()) {
-        compound.create_storage(&format!("/{section_key}/"))?;
+        compound.create_storage(format!("/{section_key}/"))?;
         write_stream(&mut compound, &format!("/{section_key}/Data"), &record.data)?;
     }
     write_stream(&mut compound, "/Storage", &schlib_storage_bytes())?;
@@ -242,7 +242,7 @@ pub(crate) fn write_pcblib_records(
     write_stream(&mut compound, "/Library/ModelsNoEmbed/Data", &[])?;
 
     for (component, section_key) in library.components.iter().zip(sections.iter()) {
-        compound.create_storage(&format!("/{section_key}/"))?;
+        compound.create_storage(format!("/{section_key}/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/Header"),
@@ -263,7 +263,7 @@ pub(crate) fn write_pcblib_records(
             &format!("/{section_key}/Data"),
             &component.data,
         )?;
-        compound.create_storage(&format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
+        compound.create_storage(format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/UniqueIdPrimitiveInformation/Header"),
@@ -282,12 +282,9 @@ pub(crate) fn write_pcblib_records(
 
 pub(crate) fn normalize_lcsc_id(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    let Some(digits) = trimmed
+    let digits = trimmed
         .strip_prefix('C')
-        .or_else(|| trimmed.strip_prefix('c'))
-    else {
-        return None;
-    };
+        .or_else(|| trimmed.strip_prefix('c'))?;
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -473,7 +470,7 @@ fn resolve_section_key(
     let candidates = section_key_candidates(name, explicit, derived);
     for section_key in &candidates {
         if compound
-            .open_stream(&format!("/{section_key}/{required_stream}"))
+            .open_stream(format!("/{section_key}/{required_stream}"))
             .is_ok()
         {
             return Ok(section_key.clone());
@@ -631,9 +628,8 @@ fn collect_section_key_pairs<'a>(
 ) -> Vec<(String, String)> {
     names
         .zip(sections.iter())
-        .filter_map(|(name, section_key)| {
-            (section_key.as_str() != name).then(|| (name.to_string(), section_key.clone()))
-        })
+        .filter(|&(name, section_key)| section_key.as_str() != name)
+        .map(|(name, section_key)| (name.to_string(), section_key.clone()))
         .collect()
 }
 
@@ -1180,7 +1176,7 @@ mod tests {
         )
         .expect("write header");
         compound
-            .create_storage(&format!("/{name}/"))
+            .create_storage(format!("/{name}/"))
             .expect("create legacy storage");
         write_stream(&mut compound, &format!("/{name}/Data"), &record.data).expect("write data");
         write_stream(&mut compound, "/Storage", &schlib_storage_bytes()).expect("write storage");

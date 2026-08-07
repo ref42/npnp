@@ -288,13 +288,17 @@ pub fn sanitize_step_model(step_data: &[u8]) -> Result<(Vec<u8>, StepSanitizeSta
         if changed { updated } else { step_data.to_vec() },
         StepSanitizeStats {
             total_solids: solids.len(),
-            removed_solids: changed.then_some(removable_solids.len()).unwrap_or(0),
-            restyled_faces: changed
-                .then_some(style_rewrite_plan.replacements.len())
-                .unwrap_or(0),
-            restyled_groups: changed
-                .then_some(style_rewrite_plan.groups_restyled)
-                .unwrap_or(0),
+            removed_solids: if changed { removable_solids.len() } else { 0 },
+            restyled_faces: if changed {
+                style_rewrite_plan.replacements.len()
+            } else {
+                0
+            },
+            restyled_groups: if changed {
+                style_rewrite_plan.groups_restyled
+            } else {
+                0
+            },
         },
     ))
 }
@@ -743,7 +747,7 @@ fn collect_geometry_logo_replacements(
         .filter_map(|cluster| {
             geometry_logo_side(&cluster, solid_bounds).map(|(axis, side)| (cluster, axis, side))
         })
-        .chain(aggregated_clusters.into_iter())
+        .chain(aggregated_clusters)
     {
         if cluster.member_indices.len() < GEOMETRY_LOGO_MIN_FACES
             || !is_logo_candidate_color(cluster.color)

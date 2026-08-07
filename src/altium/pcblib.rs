@@ -280,7 +280,7 @@ pub fn write_pcblib(library: &PcbLibrary, output_path: &Path) -> Result<()> {
     write_stream(&mut compound, "/Library/ModelsNoEmbed/Data", &[])?;
 
     for (component, section_key) in &sections {
-        compound.create_storage(&format!("/{section_key}/"))?;
+        compound.create_storage(format!("/{section_key}/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/Header"),
@@ -302,7 +302,7 @@ pub fn write_pcblib(library: &PcbLibrary, output_path: &Path) -> Result<()> {
             &component_data_bytes(component),
         )?;
         if !component.extended_primitive_information.is_empty() {
-            compound.create_storage(&format!("/{section_key}/ExtendedPrimitiveInformation/"))?;
+            compound.create_storage(format!("/{section_key}/ExtendedPrimitiveInformation/"))?;
             write_stream(
                 &mut compound,
                 &format!("/{section_key}/ExtendedPrimitiveInformation/Header"),
@@ -314,7 +314,7 @@ pub fn write_pcblib(library: &PcbLibrary, output_path: &Path) -> Result<()> {
                 &extended_primitive_information_bytes(component),
             )?;
         }
-        compound.create_storage(&format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
+        compound.create_storage(format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/UniqueIdPrimitiveInformation/Header"),
@@ -340,7 +340,7 @@ fn write_stream(
     stream.write_all(data)
 }
 
-fn collect_sections<'a>(components: &'a [PcbComponent]) -> Vec<(&'a PcbComponent, String)> {
+fn collect_sections(components: &[PcbComponent]) -> Vec<(&PcbComponent, String)> {
     let mut used = HashSet::new();
     components
         .iter()
@@ -354,10 +354,8 @@ fn collect_sections<'a>(components: &'a [PcbComponent]) -> Vec<(&'a PcbComponent
 fn collect_section_key_pairs(sections: &[(&PcbComponent, String)]) -> Vec<(String, String)> {
     sections
         .iter()
-        .filter_map(|(component, section_key)| {
-            (section_key.as_str() != component.name.as_str())
-                .then(|| (component.name.clone(), section_key.clone()))
-        })
+        .filter(|&(component, section_key)| section_key.as_str() != component.name.as_str())
+        .map(|(component, section_key)| (component.name.clone(), section_key.clone()))
         .collect()
 }
 
@@ -651,20 +649,20 @@ fn write_region(writer: &mut BinaryWriter, region: &PcbRegion) {
         if region.kind != 0 {
             params.push("KIND", region.kind.to_string());
         }
-        if let Some(net) = &region.net {
-            if !net.is_empty() {
-                params.push("NET", net);
-            }
+        if let Some(net) = &region.net
+            && !net.is_empty()
+        {
+            params.push("NET", net);
         }
-        if let Some(unique_id) = &region.unique_id {
-            if !unique_id.is_empty() {
-                params.push("UNIQUEID", unique_id);
-            }
+        if let Some(unique_id) = &region.unique_id
+            && !unique_id.is_empty()
+        {
+            params.push("UNIQUEID", unique_id);
         }
-        if let Some(name) = &region.name {
-            if !name.is_empty() {
-                params.push("NAME", name);
-            }
+        if let Some(name) = &region.name
+            && !name.is_empty()
+        {
+            params.push("NAME", name);
         }
         w.write_cstring_param_block(&params);
         w.write_u32(region.outline.len() as u32);
@@ -912,12 +910,11 @@ fn layer_name_to_byte(layer_name: &str) -> u8 {
         .trim()
         .to_ascii_uppercase()
         .replace([' ', '-'], "");
-    if let Some(rest) = name.strip_prefix("MECHANICAL") {
-        if let Ok(number) = rest.parse::<u8>() {
-            if (1..=16).contains(&number) {
-                return 56 + number;
-            }
-        }
+    if let Some(rest) = name.strip_prefix("MECHANICAL")
+        && let Ok(number) = rest.parse::<u8>()
+        && (1..=16).contains(&number)
+    {
+        return 56 + number;
     }
     match name.as_str() {
         "TOPLAYER" | "TOP" => LAYER_TOP,
@@ -1291,8 +1288,8 @@ mod tests {
         let mut compound = cfb::CompoundFile::open(file).unwrap();
         let first_key = "A".repeat(31);
         let second_key = format!("{}{}", "A".repeat(29), "_2");
-        assert!(compound.open_stream(&format!("/{first_key}/Data")).is_ok());
-        assert!(compound.open_stream(&format!("/{second_key}/Data")).is_ok());
+        assert!(compound.open_stream(format!("/{first_key}/Data")).is_ok());
+        assert!(compound.open_stream(format!("/{second_key}/Data")).is_ok());
         fs::remove_file(path).ok();
     }
 }

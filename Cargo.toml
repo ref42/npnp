@@ -1,12 +1,12 @@
 [package]
 name = "npnp"
-version = "1.0.11"
+version = "1.1.0"
 edition = "2024"
 autobins = false
-authors = ["ref42"]
+authors = ["ref42 <ybinlew@gmail.com>"]
 description = "Normalize Pin Net Pad (npnp): pure Rust LCEDA/EasyEDA downloader and Altium/KiCad library exporter"
 readme = "README.md"
-license = "Apache-2.0"
+license-file = "LICENSE"
 repository = "https://github.com/ref42/npnp"
 documentation = "https://docs.rs/npnp"
 keywords = ["altium", "easyeda", "lcsc", "electronics", "eda", "kicad"]
@@ -15,7 +15,7 @@ include = [
     "Cargo.lock",
     "Cargo.toml",
     "README.md",
-    "README.zh-CN.md",
+    "README.en.md",
     "LICENSE",
     "assets/**",
     "imgs/**",

@@ -323,12 +323,10 @@ impl BatchProgress {
 
     fn render(&mut self) {
         let bar_width = 24usize;
-        let filled = if self.total == 0 {
-            bar_width
-        } else {
-            (self.completed * bar_width + self.total / 2) / self.total
-        }
-        .min(bar_width);
+        let filled = (self.completed * bar_width + self.total / 2)
+            .checked_div(self.total)
+            .unwrap_or(bar_width)
+            .min(bar_width);
         let remaining = bar_width.saturating_sub(filled);
         let last = self.last_subject.as_deref().unwrap_or("-");
         let message = format!(
@@ -638,6 +636,7 @@ fn write_merged_outputs(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn export_merged_components_parallel(
     client: &LcedaClient,
     options: &BatchOptions,
@@ -673,8 +672,10 @@ async fn export_merged_components_parallel(
         }
         return Ok(Vec::new());
     }
-    if first_error.is_some() && !options.continue_on_error {
-        return Err(first_error.unwrap());
+    if !options.continue_on_error
+        && let Some(err) = first_error
+    {
+        return Err(err);
     }
 
     prepared.sort_by_key(|prepared| prepared.index);
@@ -725,6 +726,7 @@ async fn export_merged_components_parallel(
     Ok(exported)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_merged_components_parallel(
     client: &LcedaClient,
     targets: ExportTargets,
@@ -841,6 +843,7 @@ async fn prepare_merged_component(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_merged_components_parallel(
     client: &LcedaClient,
     targets: ExportTargets,

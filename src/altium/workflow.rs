@@ -153,23 +153,19 @@ async fn load_step_bytes_for_pcblib(
         .model_uuid
         .clone()
         .filter(|uuid| !uuid.trim().is_empty())
-    {
-        if !model_candidates
+        && !model_candidates
             .iter()
             .any(|existing| existing.eq_ignore_ascii_case(&model_uuid))
-        {
-            model_candidates.push(model_uuid);
-        }
+    {
+        model_candidates.push(model_uuid);
     }
-    if item.model_uuid.is_some() {
-        if let Ok(model_uuid) = client.get_model_uuid(item).await {
-            if !model_candidates
-                .iter()
-                .any(|existing| existing.eq_ignore_ascii_case(&model_uuid))
-            {
-                model_candidates.push(model_uuid);
-            }
-        }
+    if item.model_uuid.is_some()
+        && let Ok(model_uuid) = client.get_model_uuid(item).await
+        && !model_candidates
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&model_uuid))
+    {
+        model_candidates.push(model_uuid);
     }
 
     for model_uuid in model_candidates {

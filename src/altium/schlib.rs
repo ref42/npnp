@@ -440,26 +440,27 @@ fn build_component(
                 });
                 has_any_body = true;
             }
-        } else if let Some(bounds) = part.bounds.finish() {
-            if !part.pins.is_empty() && !part.has_graphics() {
-                component.rectangles.push(Rectangle {
-                    corner1: common::CoordPoint::from_symbol_units(
-                        bounds.min_x_units,
-                        bounds.max_y_units,
-                    ),
-                    corner2: common::CoordPoint::from_symbol_units(
-                        bounds.max_x_units,
-                        bounds.min_y_units,
-                    ),
-                    color_bgr: common::BORDER_BGR,
-                    fill_color_bgr: if complex { WHITE_BGR } else { common::FILL_BGR },
-                    is_filled: !complex,
-                    is_transparent: complex,
-                    line_width_index: BODY_LINE_WIDTH_INDEX,
-                    owner_part_id: part.owner_part_id,
-                });
-                has_any_body = true;
-            }
+        } else if let Some(bounds) = part.bounds.finish()
+            && !part.pins.is_empty()
+            && !part.has_graphics()
+        {
+            component.rectangles.push(Rectangle {
+                corner1: common::CoordPoint::from_symbol_units(
+                    bounds.min_x_units,
+                    bounds.max_y_units,
+                ),
+                corner2: common::CoordPoint::from_symbol_units(
+                    bounds.max_x_units,
+                    bounds.min_y_units,
+                ),
+                color_bgr: common::BORDER_BGR,
+                fill_color_bgr: if complex { WHITE_BGR } else { common::FILL_BGR },
+                is_filled: !complex,
+                is_transparent: complex,
+                line_width_index: BODY_LINE_WIDTH_INDEX,
+                owner_part_id: part.owner_part_id,
+            });
+            has_any_body = true;
         }
         for polyline in &part.polylines {
             component.polylines.push(Polyline {
@@ -572,25 +573,17 @@ fn build_component(
         }
     }
 
-    if !has_any_body {
-        if let Some(bounds) = global_bounds.finish() {
-            component.rectangles.push(Rectangle {
-                corner1: common::CoordPoint::from_symbol_units(
-                    bounds.min_x_units,
-                    bounds.max_y_units,
-                ),
-                corner2: common::CoordPoint::from_symbol_units(
-                    bounds.max_x_units,
-                    bounds.min_y_units,
-                ),
-                color_bgr: common::BORDER_BGR,
-                fill_color_bgr: WHITE_BGR,
-                is_filled: false,
-                is_transparent: true,
-                line_width_index: BODY_LINE_WIDTH_INDEX,
-                owner_part_id: 1,
-            });
-        }
+    if !has_any_body && let Some(bounds) = global_bounds.finish() {
+        component.rectangles.push(Rectangle {
+            corner1: common::CoordPoint::from_symbol_units(bounds.min_x_units, bounds.max_y_units),
+            corner2: common::CoordPoint::from_symbol_units(bounds.max_x_units, bounds.min_y_units),
+            color_bgr: common::BORDER_BGR,
+            fill_color_bgr: WHITE_BGR,
+            is_filled: false,
+            is_transparent: true,
+            line_width_index: BODY_LINE_WIDTH_INDEX,
+            owner_part_id: 1,
+        });
     }
 
     add_metadata_implementation(&mut component, metadata);
@@ -682,11 +675,11 @@ fn parse_path_array_points(values: &[Value]) -> Vec<PointUnits> {
                 index += 1;
                 match cmd.as_str() {
                     "Z" | "CLOSE" => {
-                        if let (Some(first), Some(last)) = (start, current) {
-                            if !same_point(first, last) {
-                                add_path_point(&mut points, first.x_units, first.y_units);
-                                current = Some(first);
-                            }
+                        if let (Some(first), Some(last)) = (start, current)
+                            && !same_point(first, last)
+                        {
+                            add_path_point(&mut points, first.x_units, first.y_units);
+                            current = Some(first);
                         }
                     }
                     "M" | "L" => {
@@ -744,43 +737,43 @@ fn parse_path_array_points(values: &[Value]) -> Vec<PointUnits> {
                         }
                     }
                     "ARC" | "A" => {
-                        if index + 2 < values.len() {
-                            if let (Some(x), Some(y)) = (
+                        if index + 2 < values.len()
+                            && let (Some(x), Some(y)) = (
                                 values.get(index + 1).and_then(common::value_as_f64),
                                 values.get(index + 2).and_then(common::value_as_f64),
-                            ) {
-                                add_path_point(&mut points, x, y);
-                                current = Some(PointUnits {
-                                    x_units: x,
-                                    y_units: y,
-                                });
-                                if start.is_none() {
-                                    start = current;
-                                }
-                                index += 3;
+                            )
+                        {
+                            add_path_point(&mut points, x, y);
+                            current = Some(PointUnits {
+                                x_units: x,
+                                y_units: y,
+                            });
+                            if start.is_none() {
+                                start = current;
                             }
+                            index += 3;
                         }
                     }
                     _ => {}
                 }
             }
             _ => {
-                if index + 1 < values.len() {
-                    if let (Some(x), Some(y)) = (
+                if index + 1 < values.len()
+                    && let (Some(x), Some(y)) = (
                         values.get(index).and_then(common::value_as_f64),
                         values.get(index + 1).and_then(common::value_as_f64),
-                    ) {
-                        add_path_point(&mut points, x, y);
-                        current = Some(PointUnits {
-                            x_units: x,
-                            y_units: y,
-                        });
-                        if start.is_none() {
-                            start = current;
-                        }
-                        index += 2;
-                        continue;
+                    )
+                {
+                    add_path_point(&mut points, x, y);
+                    current = Some(PointUnits {
+                        x_units: x,
+                        y_units: y,
+                    });
+                    if start.is_none() {
+                        start = current;
                     }
+                    index += 2;
+                    continue;
                 }
                 index += 1;
             }
@@ -807,11 +800,11 @@ fn parse_svg_path_points(text: &str) -> Vec<PointUnits> {
             command = letter;
             index += 1;
             if matches!(command, 'Z' | 'z') {
-                if let Some(first) = start {
-                    if !same_point(first, current) {
-                        add_path_point(&mut points, first.x_units, first.y_units);
-                        current = first;
-                    }
+                if let Some(first) = start
+                    && !same_point(first, current)
+                {
+                    add_path_point(&mut points, first.x_units, first.y_units);
+                    current = first;
                 }
                 continue;
             }
@@ -1004,19 +997,21 @@ fn tokenize_svg_path(text: &str) -> Vec<String> {
             }
             continue;
         }
-        if (ch == '-' || ch == '+') && !current.is_empty() && current != "e" && current != "E" {
-            if !current.trim().is_empty() {
-                tokens.push(current.trim().to_string());
-                current.clear();
-            }
+        if (ch == '-' || ch == '+')
+            && !current.is_empty()
+            && current != "e"
+            && current != "E"
+            && !current.trim().is_empty()
+        {
+            tokens.push(current.trim().to_string());
+            current.clear();
         }
         current.push(ch);
         if matches!(chars.peek(), Some(next) if next.is_ascii_alphabetic() || *next == ',' || next.is_whitespace())
+            && !current.trim().is_empty()
         {
-            if !current.trim().is_empty() {
-                tokens.push(current.trim().to_string());
-                current.clear();
-            }
+            tokens.push(current.trim().to_string());
+            current.clear();
         }
     }
     if !current.trim().is_empty() {
@@ -1065,7 +1060,7 @@ pub fn write_schlib_library(components: &[Component], output_path: &Path) -> Res
         )?;
     }
     for (component, section_key) in &sections {
-        compound.create_storage(&format!("/{section_key}/"))?;
+        compound.create_storage(format!("/{section_key}/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/Data"),
@@ -1087,7 +1082,7 @@ impl Component {
     }
 }
 
-fn collect_sections<'a>(components: &'a [Component]) -> Vec<(&'a Component, String)> {
+fn collect_sections(components: &[Component]) -> Vec<(&Component, String)> {
     let mut used = HashSet::new();
     components
         .iter()
@@ -1101,10 +1096,8 @@ fn collect_sections<'a>(components: &'a [Component]) -> Vec<(&'a Component, Stri
 fn collect_section_key_pairs(sections: &[(&Component, String)]) -> Vec<(String, String)> {
     sections
         .iter()
-        .filter_map(|(component, section_key)| {
-            (section_key.as_str() != component.name.as_str())
-                .then(|| (component.name.clone(), section_key.clone()))
-        })
+        .filter(|&(component, section_key)| section_key.as_str() != component.name.as_str())
+        .map(|(component, section_key)| (component.name.clone(), section_key.clone()))
         .collect()
 }
 
@@ -2155,8 +2148,8 @@ mod tests {
 
         let first_key = "A".repeat(31);
         let second_key = format!("{}{}", "A".repeat(29), "_2");
-        assert!(compound.open_stream(&format!("/{first_key}/Data")).is_ok());
-        assert!(compound.open_stream(&format!("/{second_key}/Data")).is_ok());
+        assert!(compound.open_stream(format!("/{first_key}/Data")).is_ok());
+        assert!(compound.open_stream(format!("/{second_key}/Data")).is_ok());
 
         std::fs::remove_file(path).ok();
     }

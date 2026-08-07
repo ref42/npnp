@@ -103,10 +103,10 @@ impl LcedaClient {
             .get("code")
             .and_then(Value::as_i64)
             .unwrap_or_default();
-        if code == 0 {
-            if let Some(model_uuid) = nested_string(&detail, &["result", "3d_model_uuid"]) {
-                return Ok(model_uuid);
-            }
+        if code == 0
+            && let Some(model_uuid) = nested_string(&detail, &["result", "3d_model_uuid"])
+        {
+            return Ok(model_uuid);
         }
 
         Ok(seed_uuid.to_string())
@@ -189,10 +189,10 @@ fn select_from_items(keyword: &str, index: usize, items: &[SearchItem]) -> Resul
         });
     }
 
-    if index == 1 {
-        if let Some(item) = find_exact_lcsc_id_match(keyword, items) {
-            return Ok(item.clone());
-        }
+    if index == 1
+        && let Some(item) = find_exact_lcsc_id_match(keyword, items)
+    {
+        return Ok(item.clone());
     }
 
     Ok(items[index - 1].clone())

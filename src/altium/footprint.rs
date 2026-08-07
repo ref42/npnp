@@ -223,10 +223,10 @@ pub fn build_pcblib_from_payload(
                         bounds.update_from_raw_points(&raw_points);
                         let mut points: Vec<CoordPoint> =
                             raw_points.into_iter().map(raw_point_to_coord).collect();
-                        if points.first() != points.last() {
-                            if let Some(first) = points.first().copied() {
-                                points.push(first);
-                            }
+                        if points.first() != points.last()
+                            && let Some(first) = points.first().copied()
+                        {
+                            points.push(first);
                         }
                         overlay_regions.push(RegionRaw { layer_code, points });
                     }
@@ -275,10 +275,10 @@ pub fn build_pcblib_from_payload(
                     bounds.update_from_raw_points(&raw_points);
                     let mut points: Vec<CoordPoint> =
                         raw_points.into_iter().map(raw_point_to_coord).collect();
-                    if points.first() != points.last() {
-                        if let Some(first) = points.first().copied() {
-                            points.push(first);
-                        }
+                    if points.first() != points.last()
+                        && let Some(first) = points.first().copied()
+                    {
+                        points.push(first);
                     }
                     overlay_regions.push(RegionRaw { layer_code, points });
                 }
@@ -653,6 +653,7 @@ pub fn build_pcblib_from_payload(
     Ok(library)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_pad(
     component: &mut PcbComponent,
     pad_raw: &PadRaw,
@@ -861,9 +862,8 @@ fn guess_package_family_height_mm(text: &str) -> Option<f64> {
         || normalized.contains("SSOP")
         || normalized.contains("TSSOP")
         || normalized.contains("MSOP")
+        || normalized.contains("SOT")
     {
-        Some(1.6)
-    } else if normalized.contains("SOT") {
         Some(1.6)
     } else if normalized.contains("DIP") {
         Some(4.0)
@@ -1132,10 +1132,11 @@ fn has_matching_circle_marker(circle: CircleRaw, markers: &[CircleRaw]) -> bool 
 }
 
 fn add_raw_point(points: &mut Vec<RawPoint>, x: f64, y: f64) {
-    if let Some(last) = points.last() {
-        if (last.x - x).abs() < 1e-9 && (last.y - y).abs() < 1e-9 {
-            return;
-        }
+    if let Some(last) = points.last()
+        && (last.x - x).abs() < 1e-9
+        && (last.y - y).abs() < 1e-9
+    {
+        return;
     }
     points.push(RawPoint { x, y });
 }
@@ -1329,26 +1330,25 @@ fn parse_path_raw_points(shape: &Value) -> Vec<RawPoint> {
                 let radius = value_f64(array.get(i + 4)).unwrap_or(0.0);
                 add_axis_aligned_rect_points(&mut points, x, y, width, height, radius);
                 i += 5;
-            } else if command == "ARC" || command == "A" {
-                if i + 2 < array.len() {
-                    if let (Some(sweep), Some(x), Some(y)) = (
-                        value_f64(array.get(i)),
-                        value_f64(array.get(i + 1)),
-                        value_f64(array.get(i + 2)),
-                    ) {
-                        append_path_arc_points(&mut points, sweep, x, y);
-                        i += 3;
-                    }
-                }
+            } else if (command == "ARC" || command == "A")
+                && i + 2 < array.len()
+                && let (Some(sweep), Some(x), Some(y)) = (
+                    value_f64(array.get(i)),
+                    value_f64(array.get(i + 1)),
+                    value_f64(array.get(i + 2)),
+                )
+            {
+                append_path_arc_points(&mut points, sweep, x, y);
+                i += 3;
             }
             continue;
         }
-        if i + 1 < array.len() {
-            if let (Some(x), Some(y)) = (value_f64(array.get(i)), value_f64(array.get(i + 1))) {
-                add_raw_point(&mut points, x, y);
-                i += 2;
-                continue;
-            }
+        if i + 1 < array.len()
+            && let (Some(x), Some(y)) = (value_f64(array.get(i)), value_f64(array.get(i + 1)))
+        {
+            add_raw_point(&mut points, x, y);
+            i += 2;
+            continue;
         }
         i += 1;
     }
@@ -1497,10 +1497,10 @@ fn pad_outline_region(pad: &PadRaw) -> Option<Vec<CoordPoint>> {
     }
     if let Some(points) = &pad.polygon_points {
         let mut outline: Vec<CoordPoint> = points.iter().copied().map(raw_point_to_coord).collect();
-        if outline.first() != outline.last() {
-            if let Some(first) = outline.first().copied() {
-                outline.push(first);
-            }
+        if outline.first() != outline.last()
+            && let Some(first) = outline.first().copied()
+        {
+            outline.push(first);
         }
         return (outline.len() >= 4).then_some(outline);
     }

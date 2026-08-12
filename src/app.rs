@@ -20,7 +20,6 @@ use crate::kicad::{
     export_kicad_batch, export_kicad_single,
 };
 use crate::lceda::LcedaClient;
-use crate::report::{ExportReportEntry, ReportStatus, write_export_report};
 use crate::util::display_path;
 
 pub async fn run_from_env() -> i32 {
@@ -181,32 +180,15 @@ async fn export_models(
     }
 
     let mut failed_ids = Vec::new();
-    let mut entries = Vec::new();
-    let mut generated_files = Vec::new();
     let mut saved = 0usize;
     while let Some(result) = tasks.join_next().await {
         match result {
-            Ok((id, Ok(path))) => {
+            Ok((id, Ok(_path))) => {
                 saved += 1;
-                generated_files.push(path.clone());
-                entries.push(ExportReportEntry {
-                    id: id.clone(),
-                    status: ReportStatus::Success,
-                    component_name: None,
-                    artifacts: vec![display_path(&path)],
-                    error: None,
-                });
                 progress.set_message(format!("saved:{} | last:{}", saved, id));
             }
-            Ok((id, Err(err))) => {
+            Ok((id, Err(_err))) => {
                 failed_ids.push(id.clone());
-                entries.push(ExportReportEntry {
-                    id: id.clone(),
-                    status: ReportStatus::Failed,
-                    component_name: None,
-                    artifacts: Vec::new(),
-                    error: Some(err.to_string()),
-                });
                 progress.set_message(format!(
                     "saved:{} failed:{} | last:{}",
                     saved,
@@ -216,13 +198,6 @@ async fn export_models(
             }
             Err(err) => {
                 failed_ids.push(format!("<task: {err}>"));
-                entries.push(ExportReportEntry {
-                    id: "<join>".into(),
-                    status: ReportStatus::Failed,
-                    component_name: None,
-                    artifacts: Vec::new(),
-                    error: Some(err.to_string()),
-                });
             }
         }
         progress.inc(1);
@@ -239,17 +214,6 @@ async fn export_models(
         failed_ids.sort();
         println!("Failed IDs: {}", failed_ids.join(", "));
     }
-    let report = write_export_report(
-        &output,
-        "model",
-        saved + failed_ids.len(),
-        saved,
-        0,
-        failed_ids.len(),
-        entries,
-        &generated_files,
-    )?;
-    println!("Report: {}", display_path(&report));
     println!("Output directory: {}", display_path(&output));
     Ok(())
 }
@@ -432,7 +396,6 @@ fn kicad_export_options(
         full,
         force,
         project_relative,
-        kicad_version: crate::cli::KicadVersion::V6,
     }
 }
 
@@ -454,10 +417,6 @@ fn print_altium_summary(summary: &crate::batch::BatchSummary) {
         println!("Generated: {}", display_path(path));
     }
     println!("Output directory: {}", display_path(&summary.output));
-    println!(
-        "Report: {}",
-        display_path(&summary.output.join("export-report.json"))
-    );
 }
 
 fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatchSummary) {
@@ -490,10 +449,6 @@ fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatch
         println!("Generated: {}", display_path(path));
     }
     println!("Output directory: {}", display_path(&summary.output));
-    println!(
-        "Report: {}",
-        display_path(&summary.output.join("export-report.json"))
-    );
 }
 
 fn format_duration(duration: Duration) -> String {

@@ -119,10 +119,8 @@ Useful shared flags:
 
 ### Export contract
 
-- Every successful multi-component export writes `export-report.json` beside the generated libraries. The report is versioned and contains one entry per requested ID with its status, component name, generated artifacts, and error text when applicable.
-- `success`, `skipped`, and `failed` are separate outcomes. Checkpointed IDs and IDs already present in an appended Altium library are reported as `skipped`; failures do not stop the remaining IDs.
 - Generated component and model names are deterministic: `<source-name>__<LCSC-ID>`. The ID is also retained in the schematic metadata as `NPNP_COMPONENT_ID`.
-- Missing STEP data does not prevent symbol or footprint export. The report and console summary identify missing-model counts where the target supports 3D output.
+- Missing STEP data does not prevent symbol or footprint export; the console summary identifies missing-model counts where the target supports 3D output.
 - Fresh merged output refuses to overwrite an existing library. Use `--append` to preserve the existing library collection and add new components, or `--force` when replacing standalone generated files is intentional.
 
 ## Export Examples

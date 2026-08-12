@@ -16,7 +16,7 @@ pub fn convert_footprint(
     lcsc_id: &str,
 ) -> Result<()> {
     let ee_footprint = FootprintImporter::parse(&component_data.package_detail)?;
-    let converter = Converter::new(args.kicad_version);
+    let converter = Converter::new();
 
     // Use LCSC ID as unique identifier to prevent name collisions
     let footprint_name = component_identity_name(&sanitize_name(&component_data.title), lcsc_id);
@@ -668,11 +668,10 @@ impl Bounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::KicadVersion;
 
     #[test]
     fn generates_front_courtyard_when_missing() {
-        let converter = Converter::new(KicadVersion::V6);
+        let converter = Converter::new();
         let mut footprint = footprint_with_single_pad();
 
         add_generated_courtyard_if_missing(&mut footprint, &converter);
@@ -694,7 +693,7 @@ mod tests {
 
     #[test]
     fn preserves_existing_courtyard() {
-        let converter = Converter::new(KicadVersion::V6);
+        let converter = Converter::new();
         let mut footprint = footprint_with_single_pad();
         footprint.lines.push(kicad::KiLine {
             start_x: -1.0,

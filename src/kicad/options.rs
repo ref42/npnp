@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use crate::cli::KicadVersion;
-
 #[derive(Debug, Clone)]
 pub struct KicadExportOptions {
     pub symbol: bool,
@@ -10,7 +8,6 @@ pub struct KicadExportOptions {
     pub full: bool,
     pub force: bool,
     pub project_relative: bool,
-    pub kicad_version: KicadVersion,
 }
 
 impl KicadExportOptions {

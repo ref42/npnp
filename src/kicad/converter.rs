@@ -1,15 +1,11 @@
-use crate::cli::KicadVersion;
 use crate::error::{ConversionError, Result};
 
-pub struct Converter {
-    _kicad_version: KicadVersion,
-}
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Converter;
 
 impl Converter {
-    pub fn new(kicad_version: KicadVersion) -> Self {
-        Self {
-            _kicad_version: kicad_version,
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Convert pixels to mils (1 px = 10 mils in EasyEDA)
@@ -204,28 +200,28 @@ mod tests {
 
     #[test]
     fn test_px_to_mil() {
-        let converter = Converter::new(KicadVersion::V6);
+        let converter = Converter::new();
         assert_eq!(converter.px_to_mil(10.0), 100);
         assert_eq!(converter.px_to_mil(5.5), 55);
     }
 
     #[test]
     fn test_px_to_mm() {
-        let converter = Converter::new(KicadVersion::V6);
+        let converter = Converter::new();
         let result = converter.px_to_mm(10.0);
         assert!((result - 2.54).abs() < 0.001);
     }
 
     #[test]
     fn test_flip_y() {
-        let converter = Converter::new(KicadVersion::V6);
+        let converter = Converter::new();
         assert_eq!(converter.flip_y(10.0), -10.0);
         assert_eq!(converter.flip_y(-5.0), 5.0);
     }
 
     #[test]
     fn test_deg_to_rad() {
-        let converter = Converter::new(KicadVersion::V6);
+        let converter = Converter::new();
         let result = converter.deg_to_rad(180.0);
         assert!((result - std::f64::consts::PI).abs() < 0.001);
     }

@@ -1,5 +1,11 @@
+use std::path::Path;
+
 use encoding_rs::GBK;
 use serde_json::Value;
+
+pub fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 
 pub fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name

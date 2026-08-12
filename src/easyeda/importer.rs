@@ -453,7 +453,6 @@ impl SymbolImporter {
     }
 
     fn parse_svg_arc(fields: &[&str]) -> Result<Vec<EeArc>> {
-        use crate::cli::KicadVersion;
         use crate::easyeda::svg_parser::{SvgCommand, parse_svg_path};
         use crate::kicad::converter::Converter;
 
@@ -463,7 +462,7 @@ impl SymbolImporter {
 
         let svg_path = fields[1];
         let commands = parse_svg_path(svg_path)?;
-        let conv = Converter::new(KicadVersion::V6);
+        let conv = Converter::new();
 
         let mut arcs = Vec::new();
         let mut current_pos = (0.0, 0.0);

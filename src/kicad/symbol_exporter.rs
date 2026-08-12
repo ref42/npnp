@@ -1,10 +1,9 @@
-use crate::cli::KicadVersion;
 use crate::error::Result;
 use crate::kicad::converter::Converter;
 use crate::kicad::symbol::*;
 
+#[derive(Debug, Default)]
 pub struct SymbolExporter {
-    version: KicadVersion,
     converter: Converter,
 }
 
@@ -18,18 +17,14 @@ fn has_flat_symbol_content(symbol: &KiSymbol) -> bool {
 }
 
 impl SymbolExporter {
-    pub fn new(version: KicadVersion) -> Self {
+    pub fn new() -> Self {
         Self {
-            version,
-            converter: Converter::new(version),
+            converter: Converter::new(),
         }
     }
 
     pub fn export(&self, symbol: &KiSymbol) -> Result<String> {
-        match self.version {
-            KicadVersion::V6 => self.export_v6(symbol),
-            KicadVersion::V5 => self.export_v5(symbol),
-        }
+        self.export_v6(symbol)
     }
 
     fn export_v6(&self, symbol: &KiSymbol) -> Result<String> {
@@ -256,6 +251,7 @@ impl SymbolExporter {
         (y_high, y_low)
     }
 
+    #[allow(dead_code)]
     fn export_v5(&self, symbol: &KiSymbol) -> Result<String> {
         let mut output = String::new();
         let geometry = self.geometry_for_v5(symbol);
@@ -505,11 +501,10 @@ impl SymbolExporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::KicadVersion;
 
     #[test]
     fn v6_exports_each_symbol_unit() {
-        let exporter = SymbolExporter::new(KicadVersion::V6);
+        let exporter = SymbolExporter::new();
         let symbol = KiSymbol {
             name: "MultiPart".to_string(),
             reference: "U".to_string(),

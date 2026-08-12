@@ -171,12 +171,6 @@ pub struct KicadCommands {
     pub language: MetadataLanguage,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KicadVersion {
-    V5,
-    V6,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

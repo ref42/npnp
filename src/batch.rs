@@ -23,7 +23,6 @@ use crate::altium::workflow::{
 use crate::error::{AppError, Result};
 use crate::lceda::{LcedaClient, SearchItem};
 use crate::lcsc::{LcscClient, LcscProduct};
-use crate::report::{ExportReportEntry, ReportStatus, write_export_report};
 use crate::util::{component_identity_name, display_path, sanitize_filename};
 
 #[derive(Debug, Clone)]
@@ -50,59 +49,8 @@ pub struct BatchSummary {
     pub failed: usize,
     pub failed_ids: Vec<String>,
     pub failure_details: Vec<String>,
-    pub skipped_ids: Vec<String>,
-    pub entries: Vec<ExportReportEntry>,
     pub output: PathBuf,
     pub generated_files: Vec<PathBuf>,
-}
-
-impl BatchSummary {
-    fn record_success(&mut self, id: &str, component_name: Option<String>) {
-        self.entries.push(ExportReportEntry {
-            id: id.to_string(),
-            status: ReportStatus::Success,
-            component_name,
-            artifacts: self
-                .generated_files
-                .iter()
-                .map(|path| display_path(path))
-                .collect(),
-            error: None,
-        });
-    }
-    fn record_skipped(&mut self, id: &str) {
-        self.skipped_ids.push(id.to_string());
-        self.entries.push(ExportReportEntry {
-            id: id.to_string(),
-            status: ReportStatus::Skipped,
-            component_name: None,
-            artifacts: Vec::new(),
-            error: None,
-        });
-    }
-    fn record_failure(&mut self, id: &str, error: &AppError) {
-        self.failed_ids.push(id.to_string());
-        self.failure_details.push(format!("{id}: {error}"));
-        self.entries.push(ExportReportEntry {
-            id: id.to_string(),
-            status: ReportStatus::Failed,
-            component_name: None,
-            artifacts: Vec::new(),
-            error: Some(error.to_string()),
-        });
-    }
-    fn write_report(&mut self) -> Result<PathBuf> {
-        write_export_report(
-            &self.output,
-            "altium",
-            self.total,
-            self.success,
-            self.skipped,
-            self.failed,
-            std::mem::take(&mut self.entries),
-            &self.generated_files,
-        )
-    }
 }
 
 pub fn discover_altium_library_name(directory: &Path) -> Result<String> {
@@ -164,12 +112,10 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
     let completed = load_checkpoint(&checkpoint_path)?;
 
     let mut pending = Vec::new();
-    let mut skipped_ids = Vec::new();
     let mut skipped = 0usize;
     for id in ids {
         if !options.force && completed.contains(&id) {
             skipped += 1;
-            skipped_ids.push(id);
         } else {
             pending.push(id);
         }
@@ -182,14 +128,9 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
         failed: 0,
         failed_ids: Vec::new(),
         failure_details: Vec::new(),
-        skipped_ids: Vec::new(),
-        entries: Vec::new(),
         output: options.output.clone(),
         generated_files: Vec::new(),
     };
-    for id in skipped_ids {
-        summary.record_skipped(&id);
-    }
 
     let actual_parallel = if options.parallel > 1 && pending.len() > 1 {
         options.parallel
@@ -209,7 +150,6 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
 
     if pending.is_empty() {
         progress.finish();
-        summary.write_report()?;
         return Ok(summary);
     }
 
@@ -238,7 +178,6 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
     }
 
     progress.finish();
-    summary.write_report()?;
     Ok(summary)
 }
 
@@ -462,8 +401,6 @@ async fn export_batch_merged(
         failed: 0,
         failed_ids: Vec::new(),
         failure_details: Vec::new(),
-        skipped_ids: Vec::new(),
-        entries: Vec::new(),
         output: options.output.clone(),
         generated_files: Vec::new(),
     };
@@ -488,8 +425,7 @@ async fn export_batch_merged(
     };
 
     progress.finish();
-    let mut summary = result?;
-    summary.write_report()?;
+    let summary = result?;
     Ok(summary)
 }
 
@@ -640,7 +576,6 @@ async fn export_batch_merged_append(
         let normalized_id = normalize_lcsc_id(&id).unwrap_or_else(|| id.clone());
         if known_identities.contains(&normalized_id) {
             summary.skipped += 1;
-            summary.record_skipped(&id);
             progress.record_skip(&id, "already present");
             continue;
         }
@@ -846,7 +781,8 @@ async fn prepare_merged_components_parallel(
             Ok((_id, Ok(item))) => prepared.push(item),
             Ok((id, Err(err))) => {
                 summary.failed += 1;
-                summary.record_failure(&id, &err);
+                summary.failed_ids.push(id.clone());
+                summary.failure_details.push(format!("{id}: {err}"));
                 progress.record_failure(&id, &err);
                 if first_error.is_none() {
                     *first_error = Some(err);
@@ -855,7 +791,8 @@ async fn prepare_merged_components_parallel(
             Err(err) => {
                 summary.failed += 1;
                 let batch_err = AppError::Other(format!("merge prepare task join failed: {err}"));
-                summary.record_failure("<join>", &batch_err);
+                summary.failed_ids.push("<join>".to_string());
+                summary.failure_details.push(batch_err.to_string());
                 progress.record_failure("<join>", &batch_err);
                 if first_error.is_none() {
                     *first_error = Some(batch_err);
@@ -960,13 +897,13 @@ async fn build_merged_components_parallel(
         match joined {
             Ok((id, Ok(item))) => {
                 summary.success += 1;
-                summary.record_success(&id, Some(item.artifacts.component_name.clone()));
                 progress.record_success(&id, Some(&item.artifacts.component_name));
                 exported.push(item);
             }
             Ok((id, Err(err))) => {
                 summary.failed += 1;
-                summary.record_failure(&id, &err);
+                summary.failed_ids.push(id.clone());
+                summary.failure_details.push(format!("{id}: {err}"));
                 progress.record_failure(&id, &err);
                 if first_error.is_none() {
                     *first_error = Some(err);
@@ -975,7 +912,8 @@ async fn build_merged_components_parallel(
             Err(err) => {
                 summary.failed += 1;
                 let batch_err = AppError::Other(format!("merge build task join failed: {err}"));
-                summary.record_failure("<join>", &batch_err);
+                summary.failed_ids.push("<join>".to_string());
+                summary.failure_details.push(batch_err.to_string());
                 progress.record_failure("<join>", &batch_err);
                 if first_error.is_none() {
                     *first_error = Some(batch_err);
@@ -1119,12 +1057,12 @@ async fn run_sequential(
             Ok(exported) => {
                 append_checkpoint(checkpoint_path, &id)?;
                 summary.success += 1;
-                summary.record_success(&id, Some(exported.display_name.clone()));
                 progress.record_success(&id, Some(&exported.display_name));
             }
             Err(err) => {
                 summary.failed += 1;
-                summary.record_failure(&id, &err);
+                summary.failed_ids.push(id.clone());
+                summary.failure_details.push(format!("{id}: {err}"));
                 progress.record_failure(&id, &err);
                 if !options.continue_on_error {
                     return Err(err);
@@ -1168,12 +1106,12 @@ async fn run_parallel(
             Ok((id, Ok(exported))) => {
                 append_checkpoint(checkpoint_path, &id)?;
                 summary.success += 1;
-                summary.record_success(&id, Some(exported.display_name.clone()));
                 progress.record_success(&id, Some(&exported.display_name));
             }
             Ok((id, Err(err))) => {
                 summary.failed += 1;
-                summary.record_failure(&id, &err);
+                summary.failed_ids.push(id.clone());
+                summary.failure_details.push(format!("{id}: {err}"));
                 progress.record_failure(&id, &err);
                 if first_error.is_none() {
                     first_error = Some(err);
@@ -1182,7 +1120,8 @@ async fn run_parallel(
             Err(err) => {
                 summary.failed += 1;
                 let batch_err = AppError::Other(format!("batch task join failed: {err}"));
-                summary.record_failure("<join>", &batch_err);
+                summary.failed_ids.push("<join>".to_string());
+                summary.failure_details.push(batch_err.to_string());
                 progress.record_failure("<join>", &batch_err);
                 if first_error.is_none() {
                     first_error = Some(batch_err);

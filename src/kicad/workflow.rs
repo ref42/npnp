@@ -17,7 +17,6 @@ use crate::kicad::{
 };
 use crate::lcsc::LcscClient;
 use crate::metadata::ResolvedMetadata;
-use crate::report::{ExportReportEntry, ReportStatus, write_export_report};
 
 #[derive(Debug, Clone)]
 pub struct KicadSingleOptions {
@@ -45,8 +44,6 @@ pub struct KicadBatchSummary {
     pub failed: usize,
     pub failed_ids: Vec<String>,
     pub failure_details: Vec<String>,
-    pub skipped_ids: Vec<String>,
-    pub entries: Vec<ExportReportEntry>,
     pub generated_files: Vec<PathBuf>,
     pub output: PathBuf,
     pub timings: KicadStageTimings,
@@ -128,11 +125,9 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     };
     let mut ids = Vec::new();
     let mut skipped = 0usize;
-    let mut skipped_ids = Vec::new();
     for id in options.ids.clone() {
         if completed.contains(&normalize_checkpoint_id(&id)) {
             skipped += 1;
-            skipped_ids.push(id);
         } else {
             ids.push(id);
         }
@@ -144,37 +139,12 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
         failed: 0,
         failed_ids: Vec::new(),
         failure_details: Vec::new(),
-        skipped_ids,
-        entries: Vec::new(),
         generated_files: generated_files_for(&manager, &options.export),
         output: options.library.output.clone(),
         timings: KicadStageTimings::default(),
         models: KicadModelSummary::default(),
     };
-    for id in &summary.skipped_ids {
-        summary.entries.push(ExportReportEntry {
-            id: id.clone(),
-            status: ReportStatus::Skipped,
-            component_name: None,
-            artifacts: Vec::new(),
-            error: None,
-        });
-    }
-
     if ids.is_empty() {
-        let report_path = write_export_report(
-            &summary.output,
-            "kicad",
-            summary.total,
-            summary.success,
-            summary.skipped,
-            summary.failed,
-            summary.entries.clone(),
-            &summary.generated_files,
-        )?;
-        if !summary.generated_files.contains(&report_path) {
-            summary.generated_files.push(report_path);
-        }
         return Ok(summary);
     }
 
@@ -224,13 +194,6 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                 summary.success += 1;
                 summary.timings.add(exported.timings);
                 summary.models.record(exported.model);
-                summary.entries.push(ExportReportEntry {
-                    id: id.clone(),
-                    status: ReportStatus::Success,
-                    component_name: Some(exported.component_name),
-                    artifacts: Vec::new(),
-                    error: None,
-                });
                 progress.set_message(format!(
                     "skip:{} fail:{} | last:{}",
                     summary.skipped, summary.failed, id
@@ -241,13 +204,6 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                 summary.failed += 1;
                 summary.failed_ids.push(id.clone());
                 summary.failure_details.push(format!("{id}: {err}"));
-                summary.entries.push(ExportReportEntry {
-                    id: id.clone(),
-                    status: ReportStatus::Failed,
-                    component_name: None,
-                    artifacts: Vec::new(),
-                    error: Some(err.to_string()),
-                });
                 progress.set_message(format!(
                     "ok:{} skip:{} fail:{} | last:{}",
                     summary.success, summary.skipped, summary.failed, id
@@ -266,13 +222,6 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                 progress.inc(1);
                 let batch_err = AppError::Other(format!("KiCad batch task join failed: {err}"));
                 summary.failure_details.push(batch_err.to_string());
-                summary.entries.push(ExportReportEntry {
-                    id: "<join>".into(),
-                    status: ReportStatus::Failed,
-                    component_name: None,
-                    artifacts: Vec::new(),
-                    error: Some(batch_err.to_string()),
-                });
                 if first_error.is_none() {
                     first_error = Some(batch_err);
                 }
@@ -281,20 +230,6 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     }
 
     progress.finish_and_clear();
-
-    let report_path = write_export_report(
-        &summary.output,
-        "kicad",
-        summary.total,
-        summary.success,
-        summary.skipped,
-        summary.failed,
-        summary.entries.clone(),
-        &summary.generated_files,
-    )?;
-    if !summary.generated_files.contains(&report_path) {
-        summary.generated_files.push(report_path);
-    }
 
     if summary.failed > 0 && !options.continue_on_error {
         return Err(first_error.unwrap_or_else(|| AppError::Other("KiCad export failed".into())));
@@ -508,7 +443,6 @@ fn generated_files_for(manager: &LibraryManager, options: &KicadExportOptions) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::KicadVersion;
 
     #[test]
     fn rejects_empty_target_selection() {
@@ -519,7 +453,6 @@ mod tests {
             full: false,
             force: false,
             project_relative: false,
-            kicad_version: KicadVersion::V6,
         };
 
         let err = validate_targets(&export).unwrap_err().to_string();

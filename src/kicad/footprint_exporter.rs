@@ -1,4 +1,3 @@
-use crate::cli::KicadVersion;
 use crate::error::Result;
 use crate::kicad::converter::Converter;
 use crate::kicad::footprint::*;
@@ -10,7 +9,7 @@ pub struct FootprintExporter {
 impl FootprintExporter {
     pub fn new() -> Self {
         Self {
-            converter: Converter::new(KicadVersion::V6),
+            converter: Converter::new(),
         }
     }
 

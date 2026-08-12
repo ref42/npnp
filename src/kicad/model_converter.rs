@@ -2,6 +2,7 @@ use super::converter::sanitize_name;
 use crate::easyeda::{ComponentData, EasyedaApi};
 use crate::error::Result;
 use crate::kicad::{KicadExportOptions, LibraryManager};
+use crate::util::component_identity_name;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -72,7 +73,7 @@ pub async fn convert_3d_model(
         return Ok(ModelExportStatus::Missing);
     };
 
-    let model_name = format!("{}_{}", sanitize_name(&model_info.title), lcsc_id);
+    let model_name = component_identity_name(&sanitize_name(&model_info.title), lcsc_id);
     let step_path = lib_manager.get_step_path(&model_name);
     let need_step = args.force || !step_path.exists();
 

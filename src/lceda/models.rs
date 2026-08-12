@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::util::{nested_string, sanitize_filename};
+use crate::util::{component_identity_name, nested_string, sanitize_filename};
 
 #[derive(Debug, Clone)]
 pub struct SearchItem {
@@ -34,7 +34,8 @@ impl SearchItem {
         let base = nested_string(&self.raw, &["footprint", "display_title"])
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| self.display_name().to_string());
-        format!("{}.step", sanitize_filename(&base))
+        let name = component_identity_name(&base, &self.lcsc_id().unwrap_or_default());
+        format!("{}.step", sanitize_filename(&name))
     }
 
     pub fn choose_obj_basename(&self) -> String {

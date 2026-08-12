@@ -9,6 +9,69 @@ use std::sync::Mutex;
 
 static SYMBOL_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
+pub fn discover_append_libraries(
+    directory: &Path,
+    library_name: Option<&str>,
+) -> Result<(Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)> {
+    if !directory.is_dir() {
+        return Err(AppError::Other(format!(
+            "KiCad append directory does not exist: {}",
+            display_path(directory)
+        )));
+    }
+
+    let requested = library_name.map(str::trim).filter(|name| !name.is_empty());
+    let mut symbols = Vec::new();
+    let mut footprints = Vec::new();
+    let mut models = Vec::new();
+    for entry in fs::read_dir(directory).map_err(KicadError::Io)? {
+        let path = entry.map_err(KicadError::Io)?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Some(stem) = name.strip_suffix(".kicad_sym") {
+            if requested.is_none_or(|value| value == stem) {
+                symbols.push(path);
+            }
+        } else if let Some(stem) = name.strip_suffix(".pretty") {
+            if path.is_dir() && requested.is_none_or(|value| value == stem) {
+                footprints.push(path);
+            }
+        } else if let Some(stem) = name.strip_suffix(".3dshapes")
+            && path.is_dir()
+            && requested.is_none_or(|value| value == stem)
+        {
+            models.push(path);
+        }
+    }
+
+    fn select_one(kind: &str, paths: &mut Vec<PathBuf>) -> Result<Option<PathBuf>> {
+        match paths.len() {
+            0 => Ok(None),
+            1 => Ok(paths.pop()),
+            _ => Err(AppError::Other(format!(
+                "KiCad append directory contains multiple {kind} libraries: {}. Use --name to select one.",
+                paths
+                    .iter()
+                    .map(|path| display_path(path))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))),
+        }
+    }
+
+    let symbol = select_one("symbol", &mut symbols)?;
+    let footprint = select_one("footprint", &mut footprints)?;
+    let model = select_one("3D model", &mut models)?;
+    if symbol.is_none() && footprint.is_none() && model.is_none() {
+        return Err(AppError::Other(format!(
+            "KiCad append directory contains no .kicad_sym, .pretty, or .3dshapes libraries: {}",
+            display_path(directory)
+        )));
+    }
+    Ok((symbol, footprint, model))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolWriteStatus {
     Added,
@@ -529,6 +592,20 @@ mod tests {
         assert_eq!(manager.footprint_lib_name(), "custom");
         assert_eq!(manager.model_lib_name(), "custom");
         assert_eq!(manager.model_dir_name(), "custom.3dshapes");
+    }
+
+    #[test]
+    fn discovers_single_append_library_set() {
+        let root = temp_dir("discover_append");
+        fs::create_dir_all(root.join("Parts.pretty")).unwrap();
+        fs::create_dir_all(root.join("Parts.3dshapes")).unwrap();
+        fs::write(root.join("Parts.kicad_sym"), "").unwrap();
+
+        let (symbol, footprint, model) = discover_append_libraries(&root, None).unwrap();
+        assert_eq!(symbol, Some(root.join("Parts.kicad_sym")));
+        assert_eq!(footprint, Some(root.join("Parts.pretty")));
+        assert_eq!(model, Some(root.join("Parts.3dshapes")));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

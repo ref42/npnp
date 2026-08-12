@@ -887,7 +887,15 @@ fn choose_step_model_name(component_name: &str, title: &str) -> String {
     } else {
         title.trim()
     };
-    let mut sanitized = sanitize_filename(base);
+    let identity = component_name
+        .rsplit_once("__")
+        .map(|(_, id)| id)
+        .unwrap_or_default();
+    let mut sanitized = if identity.is_empty() {
+        sanitize_filename(base)
+    } else {
+        sanitize_filename(&crate::util::component_identity_name(base, identity))
+    };
     if !sanitized.to_ascii_lowercase().ends_with(".step")
         && !sanitized.to_ascii_lowercase().ends_with(".stp")
     {

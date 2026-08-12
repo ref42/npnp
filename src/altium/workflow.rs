@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
 use serde_json::{Value, to_string_pretty};
 
 use crate::altium::footprint::build_pcblib_from_payload;
@@ -15,21 +14,7 @@ use crate::error::{AppError, Result};
 use crate::lceda::{LcedaClient, SearchItem};
 use crate::lcsc::{LcscClient, LcscProduct};
 use crate::metadata::ResolvedMetadata;
-use crate::util::{nested_string, sanitize_filename, split_obj_and_mtl};
-
-#[derive(Debug, Serialize)]
-struct BundleManifest {
-    component_name: String,
-    manufacturer: String,
-    search_index: usize,
-    symbol_uuid: Option<String>,
-    footprint_uuid: Option<String>,
-    model_seed_uuid: Option<String>,
-    model_resolved_uuid: Option<String>,
-    symbol_file: Option<String>,
-    footprint_file: Option<String>,
-    step_file: Option<String>,
-}
+use crate::util::{component_identity_name, nested_string, sanitize_filename, split_obj_and_mtl};
 
 pub async fn download_step(
     client: &LcedaClient,
@@ -267,7 +252,10 @@ pub async fn export_pcblib(
         .footprint_uuid()
         .ok_or(AppError::MissingSymbolOrFootprint)?;
     let footprint_data = client.component_detail(&footprint_uuid).await?;
-    let footprint_name = resolved_footprint_name(item, &footprint_data);
+    let footprint_name = component_identity_name(
+        &resolved_footprint_name(item, &footprint_data),
+        &item.lcsc_id().unwrap_or_default(),
+    );
     let out_file = out_dir.join(format!("{}.PcbLib", sanitize_filename(&footprint_name)));
     if out_file.exists() && !force {
         return Ok(out_file);
@@ -300,7 +288,10 @@ pub async fn export_schlib_with_options(
         .symbol_uuid()
         .ok_or(AppError::MissingSymbolOrFootprint)?;
     let symbol_data = client.component_detail(&symbol_uuid).await?;
-    let component_name = resolved_symbol_component_name(item, &symbol_data);
+    let component_name = component_identity_name(
+        &resolved_symbol_component_name(item, &symbol_data),
+        &item.lcsc_id().unwrap_or_default(),
+    );
     let out_file = out_dir.join(format!("{}.SchLib", sanitize_filename(&component_name)));
     if out_file.exists() && !force {
         return Ok(out_file);
@@ -309,7 +300,10 @@ pub async fn export_schlib_with_options(
     let (footprint_model_name, footprint_library_file) =
         if let Some(footprint_uuid) = item.footprint_uuid() {
             let footprint_data = client.component_detail(&footprint_uuid).await?;
-            let footprint_name = resolved_footprint_name(item, &footprint_data);
+            let footprint_name = component_identity_name(
+                &resolved_footprint_name(item, &footprint_data),
+                &item.lcsc_id().unwrap_or_default(),
+            );
             (
                 Some(footprint_name.clone()),
                 Some(format!("{}.PcbLib", sanitize_filename(&footprint_name))),
@@ -337,68 +331,6 @@ pub async fn export_schlib_with_options(
     )?;
     write_schlib(&component, &out_file)?;
     Ok(out_file)
-}
-
-pub async fn export_bundle(
-    client: &LcedaClient,
-    item: &SearchItem,
-    out_dir: &Path,
-    force: bool,
-) -> Result<BTreeMap<String, PathBuf>> {
-    fs::create_dir_all(out_dir)?;
-
-    let mut exported = export_easyeda_sources(client, item, out_dir, force).await?;
-    let base = sanitize_filename(item.display_name());
-
-    let mut resolved_model_uuid = None;
-    let mut step_file = None;
-    if item.model_uuid.is_some() {
-        let model_uuid = client.get_model_uuid(item).await?;
-        resolved_model_uuid = Some(model_uuid.clone());
-        let path = out_dir.join(item.choose_step_filename());
-        if force || !path.exists() {
-            let content = client.download_step_bytes(&model_uuid).await?;
-            fs::write(&path, content)?;
-        }
-        step_file = Some(path.clone());
-        exported.insert("step".to_string(), path);
-    }
-
-    let manifest = BundleManifest {
-        component_name: item.display_name().to_string(),
-        manufacturer: item.manufacturer.clone(),
-        search_index: item.index,
-        symbol_uuid: item.symbol_uuid(),
-        footprint_uuid: item.footprint_uuid(),
-        model_seed_uuid: item.model_uuid.clone(),
-        model_resolved_uuid: resolved_model_uuid,
-        symbol_file: exported.get("symbol").map(|path| {
-            path.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        }),
-        footprint_file: exported.get("footprint").map(|path| {
-            path.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        }),
-        step_file: step_file.as_ref().map(|path| {
-            path.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        }),
-    };
-
-    let manifest_file = out_dir.join(format!("{base}_bundle.json"));
-    if force || !manifest_file.exists() {
-        fs::write(&manifest_file, to_string_pretty(&manifest)?)?;
-    }
-    exported.insert("manifest".to_string(), manifest_file);
-
-    Ok(exported)
 }
 
 fn build_schlib_metadata(

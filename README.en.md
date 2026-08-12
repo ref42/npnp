@@ -90,26 +90,40 @@ Each tagged release builds native `npnp` CLI archives for:
 
 ## CLI
 
-Type `npnp --prompt` to print ready-to-run commands. Export commands are grouped by target EDA tool:
+Type `npnp p` to print ready-to-run commands. Export commands are grouped by target EDA tool:
 
 ```bash
 npnp search C2040 --limit 5
 
-npnp altium export C2040 --full --output altium-libs --force
-npnp altium batch --input ids.txt --output generated/altium --merge --library-name MyLib --full --continue-on-error
-npnp altium batch --input new_ids.txt --output generated/altium --merge --append --library-name MyLib --full --force --continue-on-error
+npnp altium C2040 -o altium_libs
+npnp altium -i ids.txt -o altium_libs --name MyParts -j 42
+npnp altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42
 
-npnp kicad export C2040 --full --output kicad-libs --library-name MyParts --force
-npnp kicad batch --input ids.txt --output generated/kicad --library-name MyParts --full --force --parallel 4 --continue-on-error
+npnp kicad C2040 -o kicad_libs --name MyParts
+npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42
+npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42
+
+npnp model C2040 -o step_models
+npnp model -i ids.txt -o step_models -j 42
 ```
 
 Useful shared flags:
 
 - `--full`: export all supported library targets for that EDA tool.
 - `--force`: replace existing generated outputs.
-- `--english-metadata`: prefer English metadata when available, while falling back to source metadata when it is missing.
-- `--library-name`: set the merged Altium library name or KiCad library base name.
-- Altium `--merge` creates a new merged library and refuses to overwrite an existing one. Use `--merge --append` to add components to an existing merged library.
+- `--language auto|en|zh`: select metadata language. `auto` uses source metadata, while `en` fetches English metadata with source fallback.
+- `-j`: maximum number of concurrent exports when using `-i`.
+- `-i`: reads IDs from any plain-text file; the filename does not need a `.txt` extension.
+- `--name`: optional override for the generated library base name.
+- `--append` updates the library collection inside the selected `-o` directory. For Altium it discovers the merged `.SchLib`/`.PcbLib`; for KiCad it discovers the `.kicad_sym`, `.pretty`, and `.3dshapes` libraries.
+
+### Export contract
+
+- Every successful multi-component export writes `export-report.json` beside the generated libraries. The report is versioned and contains one entry per requested ID with its status, component name, generated artifacts, and error text when applicable.
+- `success`, `skipped`, and `failed` are separate outcomes. Checkpointed IDs and IDs already present in an appended Altium library are reported as `skipped`; failures do not stop the remaining IDs.
+- Generated component and model names are deterministic: `<source-name>__<LCSC-ID>`. The ID is also retained in the schematic metadata as `NPNP_COMPONENT_ID`.
+- Missing STEP data does not prevent symbol or footprint export. The report and console summary identify missing-model counts where the target supports 3D output.
+- Fresh merged output refuses to overwrite an existing library. Use `--append` to preserve the existing library collection and add new components, or `--force` when replacing standalone generated files is intentional.
 
 ## Export Examples
 

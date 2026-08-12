@@ -1,5 +1,6 @@
 use crate::error::{AppError, KicadError, Result};
 use crate::kicad::KicadLibraryOptions;
+use crate::util::display_path;
 use regex::Regex;
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -435,7 +436,7 @@ impl LibraryManager {
 
         Self::atomic_write(&footprint_path, data.as_bytes(), 32 * 1024).map_err(KicadError::Io)?;
 
-        log::info!("Wrote footprint: {}", footprint_path.display());
+        log::info!("Wrote footprint: {}", display_path(&footprint_path));
         Ok((footprint_path, FileWriteStatus::Written))
     }
 
@@ -445,7 +446,7 @@ impl LibraryManager {
 
         Self::atomic_write(&step_path, step_data, 256 * 1024).map_err(KicadError::Io)?;
 
-        log::info!("Wrote STEP model: {}", step_path.display());
+        log::info!("Wrote STEP model: {}", display_path(&step_path));
         Ok(step_path)
     }
 
@@ -473,7 +474,7 @@ impl LibraryManager {
         path.file_name()
             .and_then(|name| name.to_str())
             .map(|name| name.to_string())
-            .ok_or_else(|| AppError::Other(format!("Invalid library path: {}", path.display())))
+            .ok_or_else(|| AppError::Other(format!("Invalid library path: {}", display_path(path))))
     }
 
     fn strip_required_suffix<'a>(name: &'a str, suffix: &str) -> Result<&'a str> {

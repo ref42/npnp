@@ -16,6 +16,7 @@ use crate::kicad::{
     export_kicad_batch, export_kicad_single,
 };
 use crate::lceda::LcedaClient;
+use crate::util::display_path;
 
 pub async fn run_from_env() -> i32 {
     let invoked_as = std::env::args_os()
@@ -88,7 +89,7 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
         } => {
             let item = client.select_item(&keyword, index).await?;
             let path = download_step(&client, &item, &output, force).await?;
-            println!("STEP saved: {}", path.display());
+            println!("STEP saved: {}", display_path(&path));
         }
         Commands::DownloadObj {
             keyword,
@@ -98,8 +99,8 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
         } => {
             let item = client.select_item(&keyword, index).await?;
             let (obj_path, mtl_path) = download_obj(&client, &item, &output, force).await?;
-            println!("OBJ saved: {}", obj_path.display());
-            println!("MTL saved: {}", mtl_path.display());
+            println!("OBJ saved: {}", display_path(&obj_path));
+            println!("MTL saved: {}", display_path(&mtl_path));
         }
         Commands::Source {
             keyword,
@@ -110,10 +111,10 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
             let item = client.select_item(&keyword, index).await?;
             let result = export_easyeda_sources(&client, &item, &output, force).await?;
             if let Some(path) = result.get("symbol") {
-                println!("Symbol source saved: {}", path.display());
+                println!("Symbol source saved: {}", display_path(path));
             }
             if let Some(path) = result.get("footprint") {
-                println!("Footprint source saved: {}", path.display());
+                println!("Footprint source saved: {}", display_path(path));
             }
         }
         Commands::Bundle {
@@ -125,16 +126,16 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
             let item = client.select_item(&keyword, index).await?;
             let result = export_bundle(&client, &item, &output, force).await?;
             if let Some(path) = result.get("manifest") {
-                println!("Bundle manifest saved: {}", path.display());
+                println!("Bundle manifest saved: {}", display_path(path));
             }
             if let Some(path) = result.get("symbol") {
-                println!("Symbol source saved: {}", path.display());
+                println!("Symbol source saved: {}", display_path(path));
             }
             if let Some(path) = result.get("footprint") {
-                println!("Footprint source saved: {}", path.display());
+                println!("Footprint source saved: {}", display_path(path));
             }
             if let Some(path) = result.get("step") {
-                println!("STEP saved: {}", path.display());
+                println!("STEP saved: {}", display_path(path));
             }
         }
         Commands::Altium { command } => run_altium_command(&client, command).await?,
@@ -162,11 +163,11 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
                 let path =
                     export_schlib_with_options(client, &item, &output, force, english_metadata)
                         .await?;
-                println!("SchLib saved: {}", path.display());
+                println!("SchLib saved: {}", display_path(&path));
             }
             if targets.pcblib {
                 let path = export_pcblib(client, &item, &output, force).await?;
-                println!("PcbLib saved: {}", path.display());
+                println!("PcbLib saved: {}", display_path(&path));
             }
         }
         AltiumCommands::Batch {
@@ -338,9 +339,9 @@ fn print_altium_summary(summary: &crate::batch::BatchSummary) {
         println!("Failed IDs: {}", summary.failed_ids.join(", "));
     }
     for path in &summary.generated_files {
-        println!("Generated: {}", path.display());
+        println!("Generated: {}", display_path(path));
     }
-    println!("Output directory: {}", summary.output.display());
+    println!("Output directory: {}", display_path(&summary.output));
 }
 
 fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatchSummary) {
@@ -370,9 +371,9 @@ fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatch
         summary.models.written, summary.models.skipped, summary.models.missing
     );
     for path in &summary.generated_files {
-        println!("Generated: {}", path.display());
+        println!("Generated: {}", display_path(path));
     }
-    println!("Output directory: {}", summary.output.display());
+    println!("Output directory: {}", display_path(&summary.output));
 }
 
 fn format_duration(duration: Duration) -> String {

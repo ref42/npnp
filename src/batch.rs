@@ -22,6 +22,7 @@ use crate::altium::workflow::{
 use crate::error::{AppError, Result};
 use crate::lceda::{LcedaClient, SearchItem};
 use crate::lcsc::{LcscClient, LcscProduct};
+use crate::util::display_path;
 use crate::util::sanitize_filename;
 
 #[derive(Debug, Clone)]
@@ -261,7 +262,7 @@ impl BatchProgress {
             targets.label(),
             parallel.max(1)
         );
-        eprintln!("Output: {}", output.display());
+        eprintln!("Output: {}", display_path(output));
 
         let mut progress = Self {
             total,
@@ -965,10 +966,10 @@ fn reject_existing_merged_outputs(
 ) -> Result<()> {
     let mut existing = Vec::new();
     if targets.schlib && schlib_path.exists() {
-        existing.push(schlib_path.display().to_string());
+        existing.push(display_path(schlib_path));
     }
     if targets.pcblib && pcblib_path.exists() {
-        existing.push(pcblib_path.display().to_string());
+        existing.push(display_path(pcblib_path));
     }
     if existing.is_empty() {
         return Ok(());

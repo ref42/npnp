@@ -7,6 +7,9 @@ use crate::lceda::SearchItem;
 use crate::lcsc::LcscProduct;
 use crate::util::{nested_string, value_to_string};
 
+const NPNP_AUTHOR: &str = "ref42";
+const NPNP_PROJECT_URL: &str = "https://github.com/ref42/npnp";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResolvedMetadata {
     pub lcsc_id: Option<String>,
@@ -82,7 +85,7 @@ impl ResolvedMetadata {
             footprint,
             datasheet: find_attribute_value_case_insensitive(attributes, "Datasheet"),
             category: find_attribute_value_case_insensitive(attributes, "Category"),
-            parameters: Vec::new(),
+            parameters: build_project_parameters(),
         };
 
         if let Some(product) = preferred_product {
@@ -112,7 +115,7 @@ impl ResolvedMetadata {
             supplier_part: clean_value(&component_data.lcsc_id),
             lcsc_part: clean_value(&component_data.lcsc_id),
             datasheet: clean_value(&component_data.datasheet),
-            parameters: Vec::new(),
+            parameters: build_project_parameters(),
             ..Self::default()
         };
 
@@ -170,6 +173,8 @@ fn build_lceda_parameters(
     footprint: &Option<String>,
 ) -> Vec<MetadataParameter> {
     let mut builder = ParameterBuilder::default();
+    builder.push("NPNP_AUTHOR", NPNP_AUTHOR);
+    builder.push("NPNP_PROJECT_URL", NPNP_PROJECT_URL);
     if let Some(component_id) = lcsc_id {
         builder.push("NPNP_COMPONENT_ID", component_id);
     }
@@ -193,6 +198,13 @@ fn build_lceda_parameters(
         }
     }
 
+    builder.parameters
+}
+
+fn build_project_parameters() -> Vec<MetadataParameter> {
+    let mut builder = ParameterBuilder::default();
+    builder.push("NPNP_AUTHOR", NPNP_AUTHOR);
+    builder.push("NPNP_PROJECT_URL", NPNP_PROJECT_URL);
     builder.parameters
 }
 
@@ -343,6 +355,51 @@ mod tests {
             .iter()
             .find(|parameter| parameter.name.eq_ignore_ascii_case(name))
             .map(|parameter| parameter.value.as_str())
+    }
+
+    #[test]
+    fn lceda_metadata_includes_npnp_attribution() {
+        let item = SearchItem {
+            index: 0,
+            display_title: "C123".to_string(),
+            title: String::new(),
+            manufacturer: String::new(),
+            model_uuid: None,
+            raw: json!({"product_code": "C123"}),
+        };
+        let metadata = ResolvedMetadata::from_lceda_search_item(&item, &json!({}), None, None);
+        assert_eq!(parameter_value(&metadata, "NPNP_AUTHOR"), Some("ref42"));
+        assert_eq!(
+            parameter_value(&metadata, "NPNP_PROJECT_URL"),
+            Some("https://github.com/ref42/npnp")
+        );
+    }
+
+    #[test]
+    fn component_metadata_includes_npnp_attribution() {
+        let component = ComponentData {
+            lcsc_id: "C123".to_string(),
+            title: String::new(),
+            designator: String::new(),
+            description: String::new(),
+            data_str: Vec::new(),
+            bbox_x: 0.0,
+            bbox_y: 0.0,
+            symbol_parts: Vec::new(),
+            package_detail: Vec::new(),
+            package_bbox_x: 0.0,
+            package_bbox_y: 0.0,
+            model_3d: None,
+            manufacturer: String::new(),
+            datasheet: String::new(),
+            jlc_id: String::new(),
+        };
+        let metadata = ResolvedMetadata::from_component_data(&component, None);
+        assert_eq!(parameter_value(&metadata, "NPNP_AUTHOR"), Some("ref42"));
+        assert_eq!(
+            parameter_value(&metadata, "NPNP_PROJECT_URL"),
+            Some("https://github.com/ref42/npnp")
+        );
     }
 
     #[test]

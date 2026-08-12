@@ -1,14 +1,18 @@
 use std::ffi::OsStr;
+use std::io::IsTerminal;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
+use indicatif::{ProgressBar, ProgressStyle};
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::altium::workflow::{
-    download_obj, download_step, export_bundle, export_easyeda_sources, export_pcblib,
-    export_schlib_with_options,
+    download_obj, download_step, export_easyeda_sources, export_pcblib, export_schlib_with_options,
 };
-use crate::batch::{BatchOptions, export_batch, parse_lcsc_ids};
+use crate::batch::{BatchOptions, discover_altium_library_name, export_batch, parse_lcsc_ids};
 use crate::cli::{AltiumCommands, Cli, Commands, KicadCommands};
 use crate::error::Result;
 use crate::kicad::{
@@ -16,6 +20,7 @@ use crate::kicad::{
     export_kicad_batch, export_kicad_single,
 };
 use crate::lceda::LcedaClient;
+use crate::report::{ExportReportEntry, ReportStatus, write_export_report};
 use crate::util::display_path;
 
 pub async fn run_from_env() -> i32 {
@@ -35,11 +40,6 @@ pub async fn run_from_env() -> i32 {
 }
 
 pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
-    if cli.prompt {
-        println!("{}", prompt_examples(invoked_as));
-        return Ok(());
-    }
-
     let Some(command) = cli.command else {
         let mut help = Cli::command();
         help.print_help()?;
@@ -50,6 +50,9 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
     let client = LcedaClient::new();
 
     match command {
+        Commands::Prompt => {
+            println!("{}", prompt_examples(invoked_as));
+        }
         Commands::Search { keyword, limit } => {
             let items = client.search_components(&keyword).await?;
             if items.is_empty() {
@@ -81,15 +84,28 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
                 );
             }
         }
-        Commands::DownloadStep {
-            keyword,
+        Commands::Model {
+            component,
+            input,
             index,
             output,
+            parallel,
             force,
         } => {
-            let item = client.select_item(&keyword, index).await?;
-            let path = download_step(&client, &item, &output, force).await?;
-            println!("STEP saved: {}", display_path(&path));
+            if let Some(component) = component {
+                let item = client.select_item(&component, index).await?;
+                let path = download_step(&client, &item, &output, force).await?;
+                println!("STEP saved: {}", display_path(&path));
+            } else {
+                let input = input.ok_or_else(|| {
+                    crate::error::AppError::Other(
+                        "provide a component ID or use -i <FILE> for multiple models".into(),
+                    )
+                })?;
+                let content = std::fs::read_to_string(&input)?;
+                let ids = parse_lcsc_ids(&content);
+                export_models(&client, ids, output, parallel, force).await?;
+            }
         }
         Commands::DownloadObj {
             keyword,
@@ -117,181 +133,271 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
                 println!("Footprint source saved: {}", display_path(path));
             }
         }
-        Commands::Bundle {
-            keyword,
-            index,
-            output,
-            force,
-        } => {
-            let item = client.select_item(&keyword, index).await?;
-            let result = export_bundle(&client, &item, &output, force).await?;
-            if let Some(path) = result.get("manifest") {
-                println!("Bundle manifest saved: {}", display_path(path));
-            }
-            if let Some(path) = result.get("symbol") {
-                println!("Symbol source saved: {}", display_path(path));
-            }
-            if let Some(path) = result.get("footprint") {
-                println!("Footprint source saved: {}", display_path(path));
-            }
-            if let Some(path) = result.get("step") {
-                println!("STEP saved: {}", display_path(path));
-            }
-        }
-        Commands::Altium { command } => run_altium_command(&client, command).await?,
-        Commands::Kicad { command } => run_kicad_command(command).await?,
+        Commands::Altium(command) => run_altium_command(&client, command).await?,
+        Commands::Kicad(command) => run_kicad_command(command).await?,
     }
 
     Ok(())
 }
 
-async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Result<()> {
-    match command {
-        AltiumCommands::Export {
-            component,
-            index,
-            output,
-            schlib,
-            pcblib,
-            full,
-            english_metadata,
-            force,
-        } => {
-            let item = client.select_item(&component, index).await?;
-            let targets = AltiumTargets::resolve(schlib, pcblib, full);
-            if targets.schlib {
-                let path =
-                    export_schlib_with_options(client, &item, &output, force, english_metadata)
-                        .await?;
-                println!("SchLib saved: {}", display_path(&path));
+async fn export_models(
+    client: &LcedaClient,
+    ids: Vec<String>,
+    output: std::path::PathBuf,
+    parallel: usize,
+    force: bool,
+) -> Result<()> {
+    if ids.is_empty() {
+        return Err(crate::error::AppError::Other(
+            "no valid LCSC IDs found in model input".into(),
+        ));
+    }
+
+    let progress = ProgressBar::new(ids.len() as u64);
+    progress.set_style(
+        ProgressStyle::with_template("{spinner:.green} [{bar:24.cyan/blue}] {pos}/{len} | {msg}")
+            .expect("valid model progress template")
+            .progress_chars("##-"),
+    );
+    progress.enable_steady_tick(Duration::from_millis(250));
+
+    let semaphore = Arc::new(Semaphore::new(parallel.max(1)));
+    let mut tasks = JoinSet::new();
+    for id in ids {
+        let client = client.clone();
+        let output = output.clone();
+        let semaphore = semaphore.clone();
+        tasks.spawn(async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .expect("model download semaphore should remain open");
+            let result = match client.select_item(&id, 1).await {
+                Ok(item) => download_step(&client, &item, &output, force).await,
+                Err(err) => Err(err),
+            };
+            (id, result)
+        });
+    }
+
+    let mut failed_ids = Vec::new();
+    let mut entries = Vec::new();
+    let mut generated_files = Vec::new();
+    let mut saved = 0usize;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok((id, Ok(path))) => {
+                saved += 1;
+                generated_files.push(path.clone());
+                entries.push(ExportReportEntry {
+                    id: id.clone(),
+                    status: ReportStatus::Success,
+                    component_name: None,
+                    artifacts: vec![display_path(&path)],
+                    error: None,
+                });
+                progress.set_message(format!("saved:{} | last:{}", saved, id));
             }
-            if targets.pcblib {
-                let path = export_pcblib(client, &item, &output, force).await?;
-                println!("PcbLib saved: {}", display_path(&path));
+            Ok((id, Err(err))) => {
+                failed_ids.push(id.clone());
+                entries.push(ExportReportEntry {
+                    id: id.clone(),
+                    status: ReportStatus::Failed,
+                    component_name: None,
+                    artifacts: Vec::new(),
+                    error: Some(err.to_string()),
+                });
+                progress.set_message(format!(
+                    "saved:{} failed:{} | last:{}",
+                    saved,
+                    failed_ids.len(),
+                    id
+                ));
+            }
+            Err(err) => {
+                failed_ids.push(format!("<task: {err}>"));
+                entries.push(ExportReportEntry {
+                    id: "<join>".into(),
+                    status: ReportStatus::Failed,
+                    component_name: None,
+                    artifacts: Vec::new(),
+                    error: Some(err.to_string()),
+                });
             }
         }
-        AltiumCommands::Batch {
+        progress.inc(1);
+    }
+    progress.finish_and_clear();
+
+    println!(
+        "STEP batch export complete. Total: {} | Saved: {} | Failed: {}",
+        saved + failed_ids.len(),
+        saved,
+        failed_ids.len()
+    );
+    if !failed_ids.is_empty() {
+        failed_ids.sort();
+        println!("Failed IDs: {}", failed_ids.join(", "));
+    }
+    let report = write_export_report(
+        &output,
+        "model",
+        saved + failed_ids.len(),
+        saved,
+        0,
+        failed_ids.len(),
+        entries,
+        &generated_files,
+    )?;
+    println!("Report: {}", display_path(&report));
+    println!("Output directory: {}", display_path(&output));
+    Ok(())
+}
+
+async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Result<()> {
+    let AltiumCommands {
+        component,
+        input,
+        index,
+        output,
+        schlib,
+        pcblib,
+        append,
+        library_name,
+        parallel,
+        language,
+        force,
+    } = command;
+    if append && component.is_some() {
+        return Err(crate::error::AppError::Other(
+            "--append requires -i because it is intended for multi-component exports".into(),
+        ));
+    }
+    if let Some(component) = component {
+        let item = client.select_item(&component, index).await?;
+        let targets = AltiumTargets::resolve(schlib, pcblib, false);
+        if targets.schlib {
+            let path = export_schlib_with_options(
+                client,
+                &item,
+                &output,
+                force,
+                language.uses_english_metadata(),
+            )
+            .await?;
+            println!("SchLib saved: {}", display_path(&path));
+        }
+        if targets.pcblib {
+            let path = export_pcblib(client, &item, &output, force).await?;
+            println!("PcbLib saved: {}", display_path(&path));
+        }
+        return Ok(());
+    }
+    let input = input.ok_or_else(|| {
+        crate::error::AppError::Other(
+            "provide a component ID or use -i <FILE> for multiple components".into(),
+        )
+    })?;
+    let library_name = match (append, library_name) {
+        (true, None) => Some(discover_altium_library_name(&output)?),
+        (_, name) => name,
+    };
+    let summary = export_batch(
+        client,
+        BatchOptions {
             input,
             output,
             schlib,
             pcblib,
-            full,
-            merge,
+            full: !schlib && !pcblib,
+            merge: true,
             append,
             library_name,
             parallel,
-            continue_on_error,
-            english_metadata,
+            continue_on_error: true,
+            english_metadata: language.uses_english_metadata(),
             force,
-        } => {
-            let summary = export_batch(
-                client,
-                BatchOptions {
-                    input,
-                    output,
-                    schlib,
-                    pcblib,
-                    full,
-                    merge,
-                    append,
-                    library_name,
-                    parallel,
-                    continue_on_error,
-                    english_metadata,
-                    force,
-                },
-            )
-            .await?;
-            print_altium_summary(&summary);
-        }
-    }
+        },
+    )
+    .await?;
+    print_altium_summary(&summary);
 
     Ok(())
 }
 
 async fn run_kicad_command(command: KicadCommands) -> Result<()> {
-    match command {
-        KicadCommands::Export {
-            component_id,
-            symbol,
-            footprint,
-            model_3d,
-            full,
-            output,
-            library_name,
-            symbol_lib,
-            footprint_lib,
-            model_lib,
-            force,
-            project_relative,
-            english_metadata,
-        } => {
-            let summary = export_kicad_single(KicadSingleOptions {
-                lcsc_id: component_id,
-                library: KicadLibraryOptions {
-                    output,
-                    library_name,
-                    symbol_lib,
-                    footprint_lib,
-                    model_lib,
-                },
-                export: kicad_export_options(
-                    symbol,
-                    footprint,
-                    model_3d,
-                    full,
-                    force,
-                    project_relative,
-                ),
-                english_metadata,
-            })
-            .await?;
-            print_kicad_summary("KiCad export complete", &summary);
-        }
-        KicadCommands::Batch {
-            input,
-            symbol,
-            footprint,
-            model_3d,
-            full,
-            output,
-            library_name,
-            symbol_lib,
-            footprint_lib,
-            model_lib,
-            parallel,
-            continue_on_error,
-            force,
-            project_relative,
-            english_metadata,
-        } => {
-            let content = std::fs::read_to_string(&input)?;
-            let ids = parse_lcsc_ids(&content);
-            let summary = export_kicad_batch(KicadBatchOptions {
-                ids,
-                library: KicadLibraryOptions {
-                    output,
-                    library_name,
-                    symbol_lib,
-                    footprint_lib,
-                    model_lib,
-                },
-                export: kicad_export_options(
-                    symbol,
-                    footprint,
-                    model_3d,
-                    full,
-                    force,
-                    project_relative,
-                ),
-                english_metadata,
-                parallel,
-                continue_on_error,
-            })
-            .await?;
-            print_kicad_summary("KiCad batch export complete", &summary);
-        }
+    let KicadCommands {
+        component,
+        input,
+        symbol,
+        footprint,
+        model_3d,
+        output,
+        append,
+        library_name,
+        parallel,
+        force,
+        project_relative,
+        language,
+    } = command;
+    if append && component.is_some() {
+        return Err(crate::error::AppError::Other(
+            "--append requires -i because it is intended for multi-component exports".into(),
+        ));
     }
+    let full = !symbol && !footprint && !model_3d;
+    if let Some(component_id) = component {
+        let summary = export_kicad_single(KicadSingleOptions {
+            lcsc_id: component_id,
+            library: KicadLibraryOptions {
+                output,
+                library_name,
+                symbol_lib: None,
+                footprint_lib: None,
+                model_lib: None,
+            },
+            export: kicad_export_options(
+                symbol,
+                footprint,
+                model_3d,
+                full,
+                force,
+                project_relative,
+            ),
+            english_metadata: language.uses_english_metadata(),
+        })
+        .await?;
+        print_kicad_summary("KiCad export complete", &summary);
+        return Ok(());
+    }
+    let input = input.ok_or_else(|| {
+        crate::error::AppError::Other(
+            "provide a component ID or use -i <FILE> for multiple components".into(),
+        )
+    })?;
+    let content = std::fs::read_to_string(&input)?;
+    let ids = parse_lcsc_ids(&content);
+    let (symbol_lib, footprint_lib, model_lib) = if append {
+        crate::kicad::discover_append_libraries(&output, library_name.as_deref())?
+    } else {
+        (None, None, None)
+    };
+    let summary = export_kicad_batch(KicadBatchOptions {
+        ids,
+        library: KicadLibraryOptions {
+            output,
+            library_name,
+            symbol_lib,
+            footprint_lib,
+            model_lib,
+        },
+        export: kicad_export_options(symbol, footprint, model_3d, full, force, project_relative),
+        english_metadata: language.uses_english_metadata(),
+        parallel,
+        continue_on_error: true,
+    })
+    .await?;
+    print_kicad_summary("KiCad export complete", &summary);
 
     Ok(())
 }
@@ -338,10 +444,20 @@ fn print_altium_summary(summary: &crate::batch::BatchSummary) {
     if !summary.failed_ids.is_empty() {
         println!("Failed IDs: {}", summary.failed_ids.join(", "));
     }
+    if !summary.failure_details.is_empty() {
+        println!("Failure details:");
+        for detail in &summary.failure_details {
+            println!("  {detail}");
+        }
+    }
     for path in &summary.generated_files {
         println!("Generated: {}", display_path(path));
     }
     println!("Output directory: {}", display_path(&summary.output));
+    println!(
+        "Report: {}",
+        display_path(&summary.output.join("export-report.json"))
+    );
 }
 
 fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatchSummary) {
@@ -374,6 +490,10 @@ fn print_kicad_summary(label: &str, summary: &crate::kicad::workflow::KicadBatch
         println!("Generated: {}", display_path(path));
     }
     println!("Output directory: {}", display_path(&summary.output));
+    println!(
+        "Report: {}",
+        display_path(&summary.output.join("export-report.json"))
+    );
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -413,55 +533,155 @@ fn prompt_examples(invoked_as: &str) -> String {
         invoked_as.trim()
     };
 
-    [
+    let color = std::io::stdout().is_terminal();
+    let heading = |text: &str| colorize(text, "36;1", color);
+    let command_line = |text: String, editable: &[&str]| {
+        colorize(&highlight_values(&text, editable, color), "32", color)
+    };
+    let mut lines = Vec::new();
+
+    lines.push(colorize(
         "Normalize Pin Net Pad (npnp) ready-to-run commands:",
-        "",
-        "Search a component",
-        &format!("  {command} search C2040 --limit 5"),
-        "",
-        "Export one Altium library set",
-        &format!("  {command} altium export C2040 --full --output altium-libs --force"),
-        "",
-        "Export one KiCad library set",
-        &format!(
-            "  {command} kicad export C2040 --full --output kicad-libs --library-name MyParts --force"
-        ),
-        "",
-        "Export source JSON plus STEP bundle",
-        &format!("  {command} bundle C2040 --index 1 --output bundle --force"),
-        "",
-        "Batch export Altium merged libraries",
-        &format!(
-            "  {command} altium batch --input ids.txt --output generated\\altium --merge --library-name MyLib --full --continue-on-error"
-        ),
-        "",
-        "Append new parts into an existing Altium merged library",
-        &format!(
-            "  {command} altium batch --input new_ids.txt --output generated\\altium --merge --append --library-name MyLib --full --force --continue-on-error"
-        ),
-        "",
-        "Batch export KiCad libraries",
-        &format!(
-            "  {command} kicad batch --input ids.txt --output generated\\kicad --library-name MyParts --full --force --parallel 4 --continue-on-error"
-        ),
-        "",
-    ]
-    .join("\n")
+        "34;1",
+        color,
+    ));
+    lines.push(colorize(
+        "Yellow values are examples you can change.",
+        "90",
+        color,
+    ));
+    lines.push(String::new());
+    lines.push(heading("Search a component"));
+    lines.push(command_line(
+        format!("  {command} search C2040 --limit 5"),
+        &["C2040", "5"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Export Altium libraries"));
+    lines.push(command_line(
+        format!("  {command} altium C2040 -o altium_libs"),
+        &["C2040", "altium_libs"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Export KiCad libraries"));
+    lines.push(command_line(
+        format!("  {command} kicad C2040 -o kicad_libs --name MyParts"),
+        &["C2040", "kicad_libs", "MyParts"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Download a STEP model"));
+    lines.push(command_line(
+        format!("  {command} model C2040 -o step_models"),
+        &["C2040", "step_models"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Download multiple STEP models"));
+    lines.push(command_line(
+        format!("  {command} model -i ids.txt -o step_models -j 42"),
+        &["ids.txt", "step_models", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Export multiple Altium components"));
+    lines.push(command_line(
+        format!("  {command} altium -i ids.txt -o altium_libs --name MyParts -j 42"),
+        &["ids.txt", "altium_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Append Altium components"));
+    lines.push(command_line(
+        format!("  {command} altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42"),
+        &["new_ids.txt", "altium_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Export multiple KiCad components"));
+    lines.push(command_line(
+        format!("  {command} kicad -i ids.txt -o kicad_libs --name MyParts -j 42"),
+        &["ids.txt", "kicad_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Append KiCad components"));
+    lines.push(command_line(
+        format!("  {command} kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42"),
+        &["new_ids.txt", "kicad_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+
+    lines.join("\n")
+}
+
+fn colorize(text: &str, code: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn highlight_values(text: &str, values: &[&str], enabled: bool) -> String {
+    if !enabled {
+        return text.to_string();
+    }
+
+    let mut values = values.to_vec();
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+
+    let mut highlighted = String::with_capacity(text.len());
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        let Some(value) = values.iter().find(|value| remaining.starts_with(**value)) else {
+            let character = remaining.chars().next().unwrap();
+            let next = character.len_utf8();
+            highlighted.push(character);
+            remaining = &remaining[next..];
+            continue;
+        };
+
+        highlighted.push_str("\x1b[33;1m");
+        highlighted.push_str(value);
+        highlighted.push_str("\x1b[32m");
+        remaining = &remaining[value.len()..];
+    }
+    highlighted
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AltiumTargets, display_invocation_name, prompt_examples};
+    use super::{AltiumTargets, display_invocation_name, highlight_values, prompt_examples};
     use std::ffi::OsStr;
 
     #[test]
     fn prompt_examples_use_requested_command_name() {
         let text = prompt_examples("npnp");
+        assert!(text.contains("Yellow values are examples you can change."));
         assert!(text.contains("npnp search C2040 --limit 5"));
-        assert!(text.contains("npnp altium export C2040 --full --output altium-libs --force"));
-        assert!(text.contains("npnp kicad batch --input ids.txt"));
+        assert!(text.contains("npnp altium C2040 -o altium_libs"));
+        assert!(text.contains("npnp kicad C2040 -o kicad_libs --name MyParts"));
+        assert!(text.contains("npnp model -i ids.txt -o step_models -j 42"));
+        assert!(text.contains("npnp altium -i ids.txt -o altium_libs --name MyParts -j 42"));
+        assert!(
+            text.contains(
+                "npnp altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42"
+            )
+        );
+        assert!(text.contains("npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42"));
+        assert!(
+            text.contains("npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42")
+        );
         assert!(!text.contains("export-kicad"));
         assert!(!text.contains("batch-kicad"));
+    }
+
+    #[test]
+    fn highlights_values_without_corrupting_ansi_sequences() {
+        let highlighted = highlight_values(
+            "model C2040 -o step_models",
+            &["C2040", "step_models"],
+            true,
+        );
+        assert_eq!(
+            highlighted,
+            "model \u{1b}[33;1mC2040\u{1b}[32m -o \u{1b}[33;1mstep_models\u{1b}[32m"
+        );
     }
 
     #[test]

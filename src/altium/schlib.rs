@@ -1139,7 +1139,7 @@ fn file_header_bytes(components: &[Component]) -> Vec<u8> {
     params.push("WEIGHT", schlib_weight(components).to_string());
     params.push("MINORVERSION", "2");
     params.push("FONTIDCOUNT", "1");
-    params.push("SIZE1", "4");
+    params.push("SIZE1", "10");
     params.push("FONTNAME1", "Times New Roman");
     params.push("USEMBCS", "T");
     params.push("ISBOC", "T");

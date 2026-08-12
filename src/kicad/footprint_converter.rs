@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::kicad;
 use crate::kicad::converter::{Converter, angle_to_ki, sanitize_name};
 use crate::kicad::{FileWriteStatus, KicadExportOptions, LibraryManager};
+use crate::util::component_identity_name;
 
 const COURTYARD_CLEARANCE_MM: f64 = 0.25;
 const COURTYARD_LINE_WIDTH_MM: f64 = 0.05;
@@ -18,7 +19,7 @@ pub fn convert_footprint(
     let converter = Converter::new(args.kicad_version);
 
     // Use LCSC ID as unique identifier to prevent name collisions
-    let footprint_name = format!("{}_{}", sanitize_name(&component_data.title), lcsc_id);
+    let footprint_name = component_identity_name(&sanitize_name(&component_data.title), lcsc_id);
 
     // Convert EasyEDA footprint to KiCad footprint
     let mut ki_footprint = kicad::KiFootprint {
@@ -431,7 +432,7 @@ pub fn convert_footprint(
         && args.targets_model_3d()
     {
         // Use LCSC ID as unique identifier to prevent name collisions
-        let model_name = format!("{}_{}", sanitize_name(&model_info.title), lcsc_id);
+        let model_name = component_identity_name(&sanitize_name(&model_info.title), lcsc_id);
 
         // Default to project-relative paths (KIPRJMOD) for easier setup
         // Use --project-relative flag to force global paths if needed

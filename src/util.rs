@@ -25,6 +25,42 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
+/// Build a stable artifact name from a source name and its LCSC identity.
+pub fn component_identity_name(source_name: &str, lcsc_id: &str) -> String {
+    let source_name = source_name.trim();
+    let id = lcsc_id.trim();
+    if id.is_empty() {
+        return sanitize_filename(source_name);
+    }
+    if source_name.is_empty() {
+        return id.to_string();
+    }
+    let source = sanitize_filename(source_name);
+    if source.eq_ignore_ascii_case(id)
+        || source
+            .rsplit_once("__")
+            .is_some_and(|(_, suffix)| suffix.eq_ignore_ascii_case(id))
+    {
+        return source;
+    }
+    format!("{source}__{id}")
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::component_identity_name;
+
+    #[test]
+    fn appends_stable_id_once() {
+        assert_eq!(component_identity_name("RP2040", "C2040"), "RP2040__C2040");
+        assert_eq!(
+            component_identity_name("RP2040__C2040", "C2040"),
+            "RP2040__C2040"
+        );
+        assert_eq!(component_identity_name("", "C2040"), "C2040");
+    }
+}
+
 pub fn nested_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut current = value;
     for key in path {

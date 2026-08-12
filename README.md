@@ -90,26 +90,40 @@
 
 ## 命令示例
 
-运行 `npnp --prompt` 可以打印可直接复制的命令。导出命令按目标 EDA 工具分组：
+运行 `npnp p` 可以打印可直接复制的命令。导出命令按目标 EDA 工具分组：
 
 ```bash
 npnp search C2040 --limit 5
 
-npnp altium export C2040 --full --output altium-libs --force
-npnp altium batch --input ids.txt --output generated/altium --merge --library-name MyLib --full --continue-on-error
-npnp altium batch --input new_ids.txt --output generated/altium --merge --append --library-name MyLib --full --force --continue-on-error
+npnp altium C2040 -o altium_libs
+npnp altium -i ids.txt -o altium_libs --name MyParts -j 42
+npnp altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42
 
-npnp kicad export C2040 --full --output kicad-libs --library-name MyParts --force
-npnp kicad batch --input ids.txt --output generated/kicad --library-name MyParts --full --force --parallel 4 --continue-on-error
+npnp kicad C2040 -o kicad_libs --name MyParts
+npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42
+npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42
+
+npnp model C2040 -o step_models
+npnp model -i ids.txt -o step_models -j 42
 ```
 
 常用统一参数：
 
 - `--full`：导出该 EDA 工具支持的全部库目标。
 - `--force`：替换已有生成结果。
-- `--english-metadata`：优先使用英文元数据；如果缺失，则自动回退到源数据中的元数据。
-- `--library-name`：设置 Altium 合并库名称或 KiCad 库基础名称。
-- Altium `--merge` 只创建新的合并库，不会覆盖已有同名库；要给已有合并库追加元件，请使用 `--merge --append`。
+- `--language auto|en|zh`：选择元数据语言。`auto` 使用源元数据，`en` 获取英文元数据并在缺失时回退到源元数据。
+- `-j`：使用 `-i` 时的最大并发导出数。
+- `-i`：从任意纯文本文件读取器件 ID，文件名不要求使用 `.txt` 扩展名。
+- `--name`：可选参数，用于覆盖生成库的基础名称。
+- `--append`：更新 `-o` 指定目录中的库集合。Altium 会发现合并的 `.SchLib`/`.PcbLib`，KiCad 会发现 `.kicad_sym`、`.pretty` 和 `.3dshapes` 库。
+
+### 导出约定
+
+- 每次多器件导出都会在生成库的同一目录写入 `export-report.json`。报告带有版本号，并为每个请求的 ID 记录状态、器件名称、生成文件以及失败原因。
+- `success`、`skipped`、`failed` 是相互独立的结果。检查点中的 ID，以及 Altium 追加模式下库中已经存在的 ID，会记录为 `skipped`；单个器件失败不会阻止其余 ID 继续处理。
+- 生成的器件和模型名称是确定性的：`<source-name>__<LCSC-ID>`。原理图库元数据中仍会保留 `NPNP_COMPONENT_ID`。
+- 缺少 STEP 数据不会阻止符号或封装导出。目标支持 3D 导出时，报告和终端摘要会标明缺少模型的数量。
+- 新建合并库不会覆盖已有库。使用 `--append` 保留已有库并添加新器件；只有在确实需要替换独立生成文件时才使用 `--force`。
 
 ## 导出示例
 

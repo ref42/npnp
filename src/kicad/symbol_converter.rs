@@ -3,6 +3,7 @@ use crate::error::Result;
 use crate::kicad;
 use crate::kicad::converter::sanitize_name;
 use crate::kicad::{KicadExportOptions, LibraryManager, SymbolWriteStatus};
+use crate::util::component_identity_name;
 
 pub fn convert_symbol(
     args: &KicadExportOptions,
@@ -11,7 +12,7 @@ pub fn convert_symbol(
     lcsc_id: &str,
 ) -> Result<()> {
     // Use LCSC ID as unique identifier to prevent name collisions
-    let component_name = format!("{}_{}", sanitize_name(&component_data.title), lcsc_id);
+    let component_name = component_identity_name(&sanitize_name(&component_data.title), lcsc_id);
     let footprint_name = component_name.clone();
 
     let common_unit = SymbolImporter::parse(&component_data.data_str).and_then(|symbol| {

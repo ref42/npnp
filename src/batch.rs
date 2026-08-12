@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -22,8 +23,8 @@ use crate::altium::workflow::{
 use crate::error::{AppError, Result};
 use crate::lceda::{LcedaClient, SearchItem};
 use crate::lcsc::{LcscClient, LcscProduct};
-use crate::util::display_path;
-use crate::util::sanitize_filename;
+use crate::report::{ExportReportEntry, ReportStatus, write_export_report};
+use crate::util::{component_identity_name, display_path, sanitize_filename};
 
 #[derive(Debug, Clone)]
 pub struct BatchOptions {
@@ -48,8 +49,97 @@ pub struct BatchSummary {
     pub success: usize,
     pub failed: usize,
     pub failed_ids: Vec<String>,
+    pub failure_details: Vec<String>,
+    pub skipped_ids: Vec<String>,
+    pub entries: Vec<ExportReportEntry>,
     pub output: PathBuf,
     pub generated_files: Vec<PathBuf>,
+}
+
+impl BatchSummary {
+    fn record_success(&mut self, id: &str, component_name: Option<String>) {
+        self.entries.push(ExportReportEntry {
+            id: id.to_string(),
+            status: ReportStatus::Success,
+            component_name,
+            artifacts: self
+                .generated_files
+                .iter()
+                .map(|path| display_path(path))
+                .collect(),
+            error: None,
+        });
+    }
+    fn record_skipped(&mut self, id: &str) {
+        self.skipped_ids.push(id.to_string());
+        self.entries.push(ExportReportEntry {
+            id: id.to_string(),
+            status: ReportStatus::Skipped,
+            component_name: None,
+            artifacts: Vec::new(),
+            error: None,
+        });
+    }
+    fn record_failure(&mut self, id: &str, error: &AppError) {
+        self.failed_ids.push(id.to_string());
+        self.failure_details.push(format!("{id}: {error}"));
+        self.entries.push(ExportReportEntry {
+            id: id.to_string(),
+            status: ReportStatus::Failed,
+            component_name: None,
+            artifacts: Vec::new(),
+            error: Some(error.to_string()),
+        });
+    }
+    fn write_report(&mut self) -> Result<PathBuf> {
+        write_export_report(
+            &self.output,
+            "altium",
+            self.total,
+            self.success,
+            self.skipped,
+            self.failed,
+            std::mem::take(&mut self.entries),
+            &self.generated_files,
+        )
+    }
+}
+
+pub fn discover_altium_library_name(directory: &Path) -> Result<String> {
+    if !directory.is_dir() {
+        return Err(AppError::Other(format!(
+            "Altium append directory does not exist: {}",
+            display_path(directory)
+        )));
+    }
+
+    let mut schlibs = HashSet::new();
+    let mut pcblibs = HashSet::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Some(stem) = name.strip_suffix(".SchLib") {
+            schlibs.insert(stem.to_string());
+        } else if let Some(stem) = name.strip_suffix(".PcbLib") {
+            pcblibs.insert(stem.to_string());
+        }
+    }
+
+    let mut pairs: Vec<String> = schlibs.intersection(&pcblibs).cloned().collect();
+    pairs.sort_unstable();
+    match pairs.as_slice() {
+        [name] => Ok(name.clone()),
+        [] => Err(AppError::Other(format!(
+            "Altium append directory contains no matching .SchLib/.PcbLib pair: {}",
+            display_path(directory)
+        ))),
+        _ => Err(AppError::Other(format!(
+            "Altium append directory contains multiple library pairs: {}. Use --name to select one.",
+            pairs.join(", ")
+        ))),
+    }
 }
 
 pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result<BatchSummary> {
@@ -74,10 +164,12 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
     let completed = load_checkpoint(&checkpoint_path)?;
 
     let mut pending = Vec::new();
+    let mut skipped_ids = Vec::new();
     let mut skipped = 0usize;
     for id in ids {
         if !options.force && completed.contains(&id) {
             skipped += 1;
+            skipped_ids.push(id);
         } else {
             pending.push(id);
         }
@@ -89,9 +181,15 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
         success: 0,
         failed: 0,
         failed_ids: Vec::new(),
+        failure_details: Vec::new(),
+        skipped_ids: Vec::new(),
+        entries: Vec::new(),
         output: options.output.clone(),
         generated_files: Vec::new(),
     };
+    for id in skipped_ids {
+        summary.record_skipped(&id);
+    }
 
     let actual_parallel = if options.parallel > 1 && pending.len() > 1 {
         options.parallel
@@ -111,6 +209,7 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
 
     if pending.is_empty() {
         progress.finish();
+        summary.write_report()?;
         return Ok(summary);
     }
 
@@ -139,6 +238,7 @@ pub async fn export_batch(client: &LcedaClient, options: BatchOptions) -> Result
     }
 
     progress.finish();
+    summary.write_report()?;
     Ok(summary)
 }
 
@@ -151,14 +251,8 @@ struct ExportTargets {
 impl ExportTargets {
     fn resolve(options: &BatchOptions) -> Result<Self> {
         if options.parallel == 0 {
-            return Err(AppError::Other("--parallel must be at least 1".to_string()));
+            return Err(AppError::Other("-j must be at least 1".to_string()));
         }
-        if options.append && !options.merge {
-            return Err(AppError::Other(
-                "--append is only supported together with --merge".to_string(),
-            ));
-        }
-
         let schlib = options.schlib || options.full;
         let pcblib = options.pcblib || options.full;
         if !schlib && !pcblib {
@@ -246,7 +340,7 @@ struct BatchProgress {
     parallel: usize,
     started_at: Instant,
     last_subject: Option<String>,
-    last_render_width: usize,
+    bar: ProgressBar,
 }
 
 impl BatchProgress {
@@ -264,6 +358,15 @@ impl BatchProgress {
         );
         eprintln!("Output: {}", display_path(output));
 
+        let bar = ProgressBar::new(total as u64);
+        bar.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.green} [{bar:24.cyan/blue}] {pos}/{len} | ok:{msg}",
+            )
+            .expect("valid batch progress template")
+            .progress_chars("##-"),
+        );
+        bar.enable_steady_tick(std::time::Duration::from_millis(250));
         let mut progress = Self {
             total,
             completed: 0,
@@ -273,7 +376,7 @@ impl BatchProgress {
             parallel: parallel.max(1),
             started_at: Instant::now(),
             last_subject: None,
-            last_render_width: 0,
+            bar,
         };
         progress.render();
         progress
@@ -289,8 +392,7 @@ impl BatchProgress {
     }
 
     fn note(&mut self, message: impl AsRef<str>) {
-        self.clear_status_line();
-        eprintln!("{}", message.as_ref());
+        self.bar.println(message.as_ref());
         self.render();
     }
 
@@ -316,55 +418,25 @@ impl BatchProgress {
     }
 
     fn finish(&mut self) {
-        if self.last_render_width > 0 {
-            eprintln!();
-            self.last_render_width = 0;
-        }
+        self.bar.finish_and_clear();
     }
 
     fn render(&mut self) {
-        let bar_width = 24usize;
-        let filled = (self.completed * bar_width + self.total / 2)
-            .checked_div(self.total)
-            .unwrap_or(bar_width)
-            .min(bar_width);
-        let remaining = bar_width.saturating_sub(filled);
         let last = self.last_subject.as_deref().unwrap_or("-");
-        let message = format!(
-            "[{}{}] {}/{} | ok:{} skip:{} fail:{} | active:{} | last:{} | elapsed:{}",
-            "#".repeat(filled),
-            "-".repeat(remaining),
-            self.completed,
-            self.total,
+        self.bar.set_position(self.completed as u64);
+        self.bar.set_message(format!(
+            "{} skip:{} fail:{} | active:{} | last:{} | elapsed:{}",
             self.success,
             self.skipped,
             self.failed,
             self.active_count(),
             last,
             format_elapsed(self.started_at.elapsed().as_secs())
-        );
-        self.draw_status_line(&message);
+        ));
     }
 
     fn active_count(&self) -> usize {
         self.total.saturating_sub(self.completed).min(self.parallel)
-    }
-
-    fn clear_status_line(&mut self) {
-        if self.last_render_width == 0 {
-            return;
-        }
-        eprint!("\r{}\r", " ".repeat(self.last_render_width));
-        let _ = io::stderr().flush();
-        self.last_render_width = 0;
-    }
-
-    fn draw_status_line(&mut self, message: &str) {
-        let current_width = message.chars().count();
-        let padding = self.last_render_width.saturating_sub(current_width);
-        eprint!("\r{}{}", message, " ".repeat(padding));
-        let _ = io::stderr().flush();
-        self.last_render_width = current_width;
     }
 }
 
@@ -389,6 +461,9 @@ async fn export_batch_merged(
         success: 0,
         failed: 0,
         failed_ids: Vec::new(),
+        failure_details: Vec::new(),
+        skipped_ids: Vec::new(),
+        entries: Vec::new(),
         output: options.output.clone(),
         generated_files: Vec::new(),
     };
@@ -413,7 +488,9 @@ async fn export_batch_merged(
     };
 
     progress.finish();
-    result
+    let mut summary = result?;
+    summary.write_report()?;
+    Ok(summary)
 }
 
 async fn export_batch_merged_fresh(
@@ -563,6 +640,7 @@ async fn export_batch_merged_append(
         let normalized_id = normalize_lcsc_id(&id).unwrap_or_else(|| id.clone());
         if known_identities.contains(&normalized_id) {
             summary.skipped += 1;
+            summary.record_skipped(&id);
             progress.record_skip(&id, "already present");
             continue;
         }
@@ -768,7 +846,7 @@ async fn prepare_merged_components_parallel(
             Ok((_id, Ok(item))) => prepared.push(item),
             Ok((id, Err(err))) => {
                 summary.failed += 1;
-                summary.failed_ids.push(id.clone());
+                summary.record_failure(&id, &err);
                 progress.record_failure(&id, &err);
                 if first_error.is_none() {
                     *first_error = Some(err);
@@ -777,6 +855,7 @@ async fn prepare_merged_components_parallel(
             Err(err) => {
                 summary.failed += 1;
                 let batch_err = AppError::Other(format!("merge prepare task join failed: {err}"));
+                summary.record_failure("<join>", &batch_err);
                 progress.record_failure("<join>", &batch_err);
                 if first_error.is_none() {
                     *first_error = Some(batch_err);
@@ -801,7 +880,7 @@ async fn prepare_merged_component(
         .as_deref()
         .and_then(normalize_lcsc_id)
         .unwrap_or_else(|| id.clone());
-    let component_name_base = merged_base_name(item.display_name(), &id).to_string();
+    let component_name_base = component_identity_name(item.display_name(), &identity);
 
     let footprint_data = if targets.pcblib || item.footprint_uuid().is_some() {
         let footprint_uuid = item
@@ -813,7 +892,7 @@ async fn prepare_merged_component(
     };
     let footprint_name_base = footprint_data
         .as_ref()
-        .map(|data| resolved_footprint_name(&item, data))
+        .map(|data| component_identity_name(&resolved_footprint_name(&item, data), &identity))
         .unwrap_or_else(|| component_name_base.clone());
 
     let symbol_data = if targets.schlib {
@@ -881,12 +960,13 @@ async fn build_merged_components_parallel(
         match joined {
             Ok((id, Ok(item))) => {
                 summary.success += 1;
+                summary.record_success(&id, Some(item.artifacts.component_name.clone()));
                 progress.record_success(&id, Some(&item.artifacts.component_name));
                 exported.push(item);
             }
             Ok((id, Err(err))) => {
                 summary.failed += 1;
-                summary.failed_ids.push(id.clone());
+                summary.record_failure(&id, &err);
                 progress.record_failure(&id, &err);
                 if first_error.is_none() {
                     *first_error = Some(err);
@@ -895,6 +975,7 @@ async fn build_merged_components_parallel(
             Err(err) => {
                 summary.failed += 1;
                 let batch_err = AppError::Other(format!("merge build task join failed: {err}"));
+                summary.record_failure("<join>", &batch_err);
                 progress.record_failure("<join>", &batch_err);
                 if first_error.is_none() {
                     *first_error = Some(batch_err);
@@ -976,7 +1057,7 @@ fn reject_existing_merged_outputs(
     }
 
     Err(AppError::Other(format!(
-        "merged output already exists: {}. Use --append to add components, or choose a new --library-name/delete the existing library first.",
+        "merged output already exists: {}. Use --append to add components, or choose a new --name/delete the existing library first.",
         existing.join(", ")
     )))
 }
@@ -986,27 +1067,14 @@ fn append_pcblib_library_direct(target: &mut PcbLibrary, source: PcbLibrary) {
     target.models.extend(source.models);
 }
 
-fn merged_base_name<'a>(base: &'a str, lcsc_id: &'a str) -> &'a str {
-    let trimmed = base.trim();
-    if trimmed.is_empty() { lcsc_id } else { trimmed }
-}
-
 fn merged_unique_name(base: &str, lcsc_id: &str, used_names: &mut HashSet<String>) -> String {
-    let base = merged_base_name(base, lcsc_id);
-    let normalized_base = base.to_ascii_lowercase();
-    if used_names.insert(normalized_base) {
-        return base.to_string();
+    let base = component_identity_name(base, lcsc_id);
+    if used_names.insert(base.to_ascii_lowercase()) {
+        return base;
     }
-
-    let with_id = format!("{base}_{lcsc_id}");
-    let normalized_with_id = with_id.to_ascii_lowercase();
-    if used_names.insert(normalized_with_id) {
-        return with_id;
-    }
-
     let mut index = 2usize;
     loop {
-        let candidate = format!("{base}_{lcsc_id}_{index}");
+        let candidate = format!("{base}_{index}");
         if used_names.insert(candidate.to_ascii_lowercase()) {
             return candidate;
         }
@@ -1051,11 +1119,12 @@ async fn run_sequential(
             Ok(exported) => {
                 append_checkpoint(checkpoint_path, &id)?;
                 summary.success += 1;
+                summary.record_success(&id, Some(exported.display_name.clone()));
                 progress.record_success(&id, Some(&exported.display_name));
             }
             Err(err) => {
                 summary.failed += 1;
-                summary.failed_ids.push(id.clone());
+                summary.record_failure(&id, &err);
                 progress.record_failure(&id, &err);
                 if !options.continue_on_error {
                     return Err(err);
@@ -1099,11 +1168,12 @@ async fn run_parallel(
             Ok((id, Ok(exported))) => {
                 append_checkpoint(checkpoint_path, &id)?;
                 summary.success += 1;
+                summary.record_success(&id, Some(exported.display_name.clone()));
                 progress.record_success(&id, Some(&exported.display_name));
             }
             Ok((id, Err(err))) => {
                 summary.failed += 1;
-                summary.failed_ids.push(id.clone());
+                summary.record_failure(&id, &err);
                 progress.record_failure(&id, &err);
                 if first_error.is_none() {
                     first_error = Some(err);
@@ -1112,6 +1182,7 @@ async fn run_parallel(
             Err(err) => {
                 summary.failed += 1;
                 let batch_err = AppError::Other(format!("batch task join failed: {err}"));
+                summary.record_failure("<join>", &batch_err);
                 progress.record_failure("<join>", &batch_err);
                 if first_error.is_none() {
                     first_error = Some(batch_err);
@@ -1241,8 +1312,8 @@ fn format_elapsed(seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BatchOptions, ExportTargets, format_elapsed, format_subject, parse_lcsc_ids,
-        reject_existing_merged_outputs, resolve_library_name,
+        BatchOptions, ExportTargets, discover_altium_library_name, format_elapsed, format_subject,
+        parse_lcsc_ids, reject_existing_merged_outputs, resolve_library_name,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1252,6 +1323,17 @@ mod tests {
     fn parse_ids_deduplicates_and_preserves_order() {
         let ids = parse_lcsc_ids("C2040\nfoo C5676243 bar c2040 baz C42");
         assert_eq!(ids, vec!["C2040", "C5676243", "C42"]);
+    }
+
+    #[test]
+    fn discovers_single_altium_append_pair() {
+        let root =
+            std::env::temp_dir().join(format!("npnp-altium-discovery-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("Parts.SchLib"), b"").unwrap();
+        fs::write(root.join("Parts.PcbLib"), b"").unwrap();
+        assert_eq!(discover_altium_library_name(&root).unwrap(), "Parts");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

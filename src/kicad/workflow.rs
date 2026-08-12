@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use indicatif::{ProgressBar, ProgressStyle};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -16,6 +17,7 @@ use crate::kicad::{
 };
 use crate::lcsc::LcscClient;
 use crate::metadata::ResolvedMetadata;
+use crate::report::{ExportReportEntry, ReportStatus, write_export_report};
 
 #[derive(Debug, Clone)]
 pub struct KicadSingleOptions {
@@ -43,6 +45,8 @@ pub struct KicadBatchSummary {
     pub failed: usize,
     pub failed_ids: Vec<String>,
     pub failure_details: Vec<String>,
+    pub skipped_ids: Vec<String>,
+    pub entries: Vec<ExportReportEntry>,
     pub generated_files: Vec<PathBuf>,
     pub output: PathBuf,
     pub timings: KicadStageTimings,
@@ -124,9 +128,11 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     };
     let mut ids = Vec::new();
     let mut skipped = 0usize;
+    let mut skipped_ids = Vec::new();
     for id in options.ids.clone() {
         if completed.contains(&normalize_checkpoint_id(&id)) {
             skipped += 1;
+            skipped_ids.push(id);
         } else {
             ids.push(id);
         }
@@ -138,17 +144,50 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
         failed: 0,
         failed_ids: Vec::new(),
         failure_details: Vec::new(),
+        skipped_ids,
+        entries: Vec::new(),
         generated_files: generated_files_for(&manager, &options.export),
         output: options.library.output.clone(),
         timings: KicadStageTimings::default(),
         models: KicadModelSummary::default(),
     };
+    for id in &summary.skipped_ids {
+        summary.entries.push(ExportReportEntry {
+            id: id.clone(),
+            status: ReportStatus::Skipped,
+            component_name: None,
+            artifacts: Vec::new(),
+            error: None,
+        });
+    }
 
     if ids.is_empty() {
+        let report_path = write_export_report(
+            &summary.output,
+            "kicad",
+            summary.total,
+            summary.success,
+            summary.skipped,
+            summary.failed,
+            summary.entries.clone(),
+            &summary.generated_files,
+        )?;
+        if !summary.generated_files.contains(&report_path) {
+            summary.generated_files.push(report_path);
+        }
         return Ok(summary);
     }
 
     let parallel = options.parallel.max(1).min(ids.len().max(1));
+    let progress = ProgressBar::new(ids.len() as u64);
+    progress.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} [{bar:24.cyan/blue}] {pos}/{len} | ok:{msg}",
+        )
+        .expect("valid KiCad progress template")
+        .progress_chars("##-"),
+    );
+    progress.enable_steady_tick(Duration::from_millis(250));
     let semaphore = Arc::new(Semaphore::new(parallel));
     let mut join_set = JoinSet::new();
 
@@ -185,23 +224,76 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                 summary.success += 1;
                 summary.timings.add(exported.timings);
                 summary.models.record(exported.model);
+                summary.entries.push(ExportReportEntry {
+                    id: id.clone(),
+                    status: ReportStatus::Success,
+                    component_name: Some(exported.component_name),
+                    artifacts: Vec::new(),
+                    error: None,
+                });
+                progress.set_message(format!(
+                    "skip:{} fail:{} | last:{}",
+                    summary.skipped, summary.failed, id
+                ));
+                progress.inc(1);
             }
             Ok((id, Err(err))) => {
                 summary.failed += 1;
                 summary.failed_ids.push(id.clone());
                 summary.failure_details.push(format!("{id}: {err}"));
+                summary.entries.push(ExportReportEntry {
+                    id: id.clone(),
+                    status: ReportStatus::Failed,
+                    component_name: None,
+                    artifacts: Vec::new(),
+                    error: Some(err.to_string()),
+                });
+                progress.set_message(format!(
+                    "ok:{} skip:{} fail:{} | last:{}",
+                    summary.success, summary.skipped, summary.failed, id
+                ));
+                progress.inc(1);
                 if first_error.is_none() {
                     first_error = Some(err);
                 }
             }
             Err(err) => {
                 summary.failed += 1;
+                progress.set_message(format!(
+                    "ok:{} skip:{} fail:{} | task error",
+                    summary.success, summary.skipped, summary.failed
+                ));
+                progress.inc(1);
                 let batch_err = AppError::Other(format!("KiCad batch task join failed: {err}"));
+                summary.failure_details.push(batch_err.to_string());
+                summary.entries.push(ExportReportEntry {
+                    id: "<join>".into(),
+                    status: ReportStatus::Failed,
+                    component_name: None,
+                    artifacts: Vec::new(),
+                    error: Some(batch_err.to_string()),
+                });
                 if first_error.is_none() {
                     first_error = Some(batch_err);
                 }
             }
         }
+    }
+
+    progress.finish_and_clear();
+
+    let report_path = write_export_report(
+        &summary.output,
+        "kicad",
+        summary.total,
+        summary.success,
+        summary.skipped,
+        summary.failed,
+        summary.entries.clone(),
+        &summary.generated_files,
+    )?;
+    if !summary.generated_files.contains(&report_path) {
+        summary.generated_files.push(report_path);
     }
 
     if summary.failed > 0 && !options.continue_on_error {
@@ -328,7 +420,7 @@ fn validate_batch_options(options: &KicadBatchOptions) -> Result<()> {
         ));
     }
     if options.parallel == 0 {
-        return Err(AppError::Other("--parallel must be at least 1".to_string()));
+        return Err(AppError::Other("-j must be at least 1".to_string()));
     }
     validate_targets(&options.export)?;
     validate_library_options(&options.library)
@@ -348,9 +440,7 @@ fn validate_library_options(options: &KicadLibraryOptions) -> Result<()> {
     if let Some(library_name) = &options.library_name
         && library_name.trim().is_empty()
     {
-        return Err(AppError::Other(
-            "--library-name must not be empty".to_string(),
-        ));
+        return Err(AppError::Other("--name must not be empty".to_string()));
     }
     if let Some(symbol_lib) = &options.symbol_lib
         && !path_ends_with(symbol_lib, ".kicad_sym")

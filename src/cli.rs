@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[derive(Debug, Parser)]
 #[command(name = "npnp")]
 #[command(version)]
-#[command(about = "Normalize Pin Net Pad (npnp) - pure Rust EDA library exporter")]
+#[command(about = "Normalize Pin Net Pad (npnp) - pure Rust EDA library exporter, @Ref42,https://github.com/ref42/npnp")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,

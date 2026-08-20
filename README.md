@@ -5,7 +5,7 @@
 <h1 align="center">npnp (Normalize Pin Net Pad)</h1>
 
 <p align="center">
-  <strong>批量导出立创商城元件为 Altium Designer（AD）、KiCad 可用的命令行工具。</strong>
+  <strong>批量将立创商城元件导出为 Altium Designer（AD）、KiCad 可用格式的命令行工具。</strong>
 </p>
 
 <p align="center">

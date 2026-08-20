@@ -5,7 +5,7 @@
 <h1 align="center">npnp (Normalize Pin Net Pad)</h1>
 
 <p align="center">
-  <strong>Batch export LCSC components from the command line into formats supported by Altium Designer (AD) and KiCad.</strong>
+  <strong>A command‑line tool for batch‑exporting components from LCSC for Altium Designer (AD) and KiCad to use.</strong>
 </p>
 
 <p align="center">

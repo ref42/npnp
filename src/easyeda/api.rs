@@ -386,9 +386,22 @@ impl EasyedaApi {
                         .get("title")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
+                    // The model is drawn in the footprint only after applying `c_rotation`;
+                    // dropping it leaves every footprint whose model is rotated at 90
+                    // degrees with the 3D body across the pads instead of on them.
+                    let rotation_z = attrs
+                        .get("c_rotation")
+                        .and_then(|v| v.as_str())
+                        .and_then(|text| text.split(',').nth(2))
+                        .and_then(|value| value.trim().parse::<f64>().ok())
+                        .unwrap_or(0.0);
 
                     if let (Some(uuid), Some(title)) = (uuid, title) {
-                        return Some(Model3dInfo { uuid, title });
+                        return Some(Model3dInfo {
+                            uuid,
+                            title,
+                            rotation_z,
+                        });
                     }
                 }
             }
@@ -714,6 +727,33 @@ fn is_not_found_api_message(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_3d_model_rotation_from_the_footprint_outline() {
+        // Real shape row of an LCSC SOP-8 footprint (trimmed): the model is stored rotated by 90
+        // degrees and has to keep that rotation, or the exported 3D body lands across the pads.
+        let shapes = vec![
+            r#"SVGNODE~{"attrs":{"uuid":"765d86d5","title":"SOP-8_L5.0-W4.0-H1.8-LS6.2-P1.27","c_etype":"outline3D","c_origin":"4001,2998","c_width":"24.4094","c_height":"19.685","c_rotation":"0,0,90"}}"#
+                .to_string(),
+        ];
+
+        let model = EasyedaApi::extract_3d_model_from_svgnode(&shapes).expect("model metadata");
+
+        assert_eq!(model.uuid, "765d86d5");
+        assert_eq!(model.title, "SOP-8_L5.0-W4.0-H1.8-LS6.2-P1.27");
+        assert_eq!(model.rotation_z, 90.0);
+    }
+
+    #[test]
+    fn defaults_to_no_rotation_without_outline_data() {
+        let shapes = vec![
+            r#"SVGNODE~{"attrs":{"uuid":"abc","title":"BODY","c_etype":"outline3D"}}"#.to_string(),
+        ];
+
+        let model = EasyedaApi::extract_3d_model_from_svgnode(&shapes).expect("model metadata");
+
+        assert_eq!(model.rotation_z, 0.0);
+    }
 
     #[test]
     fn recognizes_html_forbidden_as_upstream_block() {

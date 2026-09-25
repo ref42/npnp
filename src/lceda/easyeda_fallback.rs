@@ -302,7 +302,9 @@ fn footprint_payload_from_component(data: &ComponentData) -> Value {
         model_3d = json!({
             "title": model.title,
             "uri": format!("{STEP_PREFIX}{}", model.uuid),
-            "transform": "0,0,0,0,0,0",
+            // "<size x>,<size y>,<size z>,<rot z>,...": only the rotation is needed to place the
+            // model, and it has to survive into the rebuilt lceda payload.
+            "transform": format!("0,0,0,{},0,0,0,0,0", model.rotation_z),
         });
     }
 
@@ -677,6 +679,7 @@ mod tests {
             model_3d: Some(Model3dInfo {
                 uuid: "model-uuid".to_string(),
                 title: "BODY-H1.0".to_string(),
+                rotation_z: 0.0,
             }),
             manufacturer: "NPNP".to_string(),
             datasheet: String::new(),

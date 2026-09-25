@@ -3,6 +3,50 @@ use std::path::Path;
 use encoding_rs::GBK;
 use serde_json::Value;
 
+/// Convert EasyEDA's 3D model rotation into the angle written to a KiCad footprint's `(rotate)`.
+///
+/// EasyEDA stores the model angle in its footprint frame, where `+Y` runs down the screen, and
+/// KiCad's footprint frame has the same orientation, so the angle keeps its magnitude but flips
+/// sign: a stored 90 degrees becomes 270 (and a stored 0 stays 0).
+///
+/// Verified against KiCad renders of the exported footprints (top view, tilted perspective, and a
+/// pin-1 comparison sheet): with this angle the model's leads land on the pads and the model's
+/// pin-1 dot sits on pad 1. The 180 degree opposite is wrong for every part checked - the text on
+/// the body reads upside down and the dot moves to the far corner.
+///
+/// The translation is deliberately left at zero: EasyEDA already stores the model where it
+/// belongs, and the offsets carried in `model_3d.transform` / `c_origin` move footprints that
+/// render correctly today (C144198, C668205, C725790) off the pads by about a millimetre.
+pub fn model_rotation_z(easyeda_degrees: f64) -> f64 {
+    normalize_rotation(-easyeda_degrees)
+}
+
+/// Convert EasyEDA's 3D model rotation into the angle written to an Altium 3D body
+/// (`MODEL.3D.ROTZ`).
+///
+/// Altium's footprint frame is the mirror of the EasyEDA/KiCad frame along Y - its files store the
+/// same pads with `y` negated (compare the pad locations in an exported `.PcbLib` with the
+/// `dataStr` it came from) - so the same physical orientation needs the *same* angle instead of the
+/// negated one. Writing the KiCad value here rotates every model by twice the model angle, which
+/// shows up as a displaced model (its origin is not its centre) and a pin-1 dot on the wrong
+/// corner.
+///
+/// Real Altium libraries keep `MODEL.3D.ROTZ` and the matching model-table entry in sync, which is
+/// what the exporter mirrors; the value itself cannot be rendered here without Altium, so both
+/// angles are kept in named helpers to make a swap trivial.
+pub fn altium_model_rotation_z(easyeda_degrees: f64) -> f64 {
+    normalize_rotation(easyeda_degrees)
+}
+
+fn normalize_rotation(degrees: f64) -> f64 {
+    if !degrees.is_finite() {
+        return 0.0;
+    }
+    let converted = degrees.rem_euclid(360.0);
+    // `rem_euclid` can hand back -0.0 for a zero angle; normalise it so exported files stay stable.
+    if converted == 0.0 { 0.0 } else { converted }
+}
+
 pub fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -193,7 +237,37 @@ pub fn split_obj_and_mtl(content: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{repair_misdecoded_gbk_text, sanitize_filename, split_obj_and_mtl};
+    use super::{
+        altium_model_rotation_z, model_rotation_z, repair_misdecoded_gbk_text, sanitize_filename,
+        split_obj_and_mtl,
+    };
+
+    #[test]
+    fn converts_easyeda_model_rotation_into_body_rotation() {
+        assert_eq!(model_rotation_z(0.0), 0.0);
+        assert_eq!(model_rotation_z(90.0), 270.0);
+        assert_eq!(model_rotation_z(180.0), 180.0);
+        assert_eq!(model_rotation_z(270.0), 90.0);
+        assert_eq!(model_rotation_z(-90.0), 90.0);
+        assert_eq!(model_rotation_z(360.0), 0.0);
+        assert_eq!(model_rotation_z(f64::NAN), 0.0);
+    }
+
+    #[test]
+    fn mirrors_the_rotation_for_y_up_target_frames() {
+        // Altium's footprint frame is the Y mirror of the EasyEDA/KiCad frame, so the physical
+        // orientation needs the unnegated angle there.
+        assert_eq!(altium_model_rotation_z(0.0), 0.0);
+        assert_eq!(altium_model_rotation_z(90.0), 90.0);
+        assert_eq!(altium_model_rotation_z(270.0), 270.0);
+        assert_eq!(altium_model_rotation_z(360.0), 0.0);
+        assert_eq!(altium_model_rotation_z(f64::NAN), 0.0);
+        assert_eq!(
+            (altium_model_rotation_z(90.0) + model_rotation_z(90.0)) % 360.0,
+            0.0,
+            "the two targets must mirror each other"
+        );
+    }
 
     #[test]
     fn sanitizes_windows_unsafe_characters() {

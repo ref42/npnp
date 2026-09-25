@@ -1090,6 +1090,57 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn writes_model_rotation_into_the_component_body() {
+        let body = PcbComponentBody {
+            layer_name: "MECHANICAL1".to_string(),
+            name: "__LCEDA_BODY__".to_string(),
+            kind: 0,
+            subpoly_index: -1,
+            union_index: 0,
+            arc_resolution_raw: 5_000,
+            is_shape_based: false,
+            cavity_height_raw: 0,
+            standoff_height_raw: 0,
+            overall_height_raw: 100_000,
+            body_color_3d: 0x808080,
+            body_opacity_3d: 1.0,
+            body_projection: 0,
+            model_id: "{00000000-0000-0000-0000-000000000000}".to_string(),
+            model_embed: true,
+            model_2d_location: CoordPoint::new(0, 0),
+            model_2d_rotation: 0.0,
+            model_3d_rot_x: 0.0,
+            model_3d_rot_y: 0.0,
+            model_3d_rot_z: 270.0,
+            model_3d_dz_raw: 0,
+            model_checksum: 0,
+            model_name: "BODY.step".to_string(),
+            model_type: 1,
+            model_source: "Undefined".to_string(),
+            identifier: None,
+            texture: String::new(),
+            outline: vec![
+                CoordPoint::new(0, 0),
+                CoordPoint::new(10_000, 0),
+                CoordPoint::new(10_000, 10_000),
+            ],
+            is_locked: false,
+            is_tenting_top: false,
+            is_tenting_bottom: false,
+            is_keepout: false,
+        };
+
+        let mut writer = BinaryWriter::default();
+        write_component_body(&mut writer, &body);
+        let text = String::from_utf8_lossy(&writer.into_inner()).to_string();
+
+        assert!(
+            text.contains("MODEL.3D.ROTZ=270"),
+            "model rotation missing from body parameters: {text}"
+        );
+    }
+
+    #[test]
     fn writes_pcblib_compound_streams() {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

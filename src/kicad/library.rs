@@ -503,11 +503,15 @@ impl LibraryManager {
         Ok((footprint_path, FileWriteStatus::Written))
     }
 
-    /// Write only STEP model
+    /// Write only STEP model, placed on the board plane.
+    ///
+    /// LCEDA does not always author a model resting on the board, so its geometry is moved there
+    /// before it is written (see `crate::step_model`).
     pub fn write_step_model(&self, model_name: &str, step_data: &[u8]) -> Result<PathBuf> {
         let step_path = self.get_step_path(model_name);
+        let step_data = crate::step_model::place_step_on_board(step_data);
 
-        Self::atomic_write(&step_path, step_data, 256 * 1024).map_err(KicadError::Io)?;
+        Self::atomic_write(&step_path, &step_data, 256 * 1024).map_err(KicadError::Io)?;
 
         log::info!("Wrote STEP model: {}", display_path(&step_path));
         Ok(step_path)
@@ -709,6 +713,36 @@ mod tests {
 
         assert_eq!(first.1, FileWriteStatus::Written);
         assert_eq!(second.1, FileWriteStatus::Skipped);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writes_step_models_resting_on_the_board_plane() {
+        let root = temp_dir("step-placement");
+        let manager = LibraryManager::new(&root);
+        manager.create_directories().unwrap();
+
+        // A model centred on Z, like C2904739 (SOP-16), whose geometry sinks into the board when it
+        // reaches the footprint untouched.
+        let mut step = String::from(
+            "ISO-10303-21;\nDATA;\n#900 = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, 1.2 ) ) ;\n",
+        );
+        for index in 0..40 {
+            step.push_str(&format!(
+                "#{index} = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, -0.83 ) ) ;\n"
+            ));
+        }
+        step.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
+
+        let path = manager
+            .write_step_model("SOP-16_C2904739", step.as_bytes())
+            .unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+
+        assert!(!written.contains("-0.83"));
+        assert!(written.contains("0.000000000"));
+        assert!(written.contains("2.030000000"));
 
         let _ = fs::remove_dir_all(root);
     }

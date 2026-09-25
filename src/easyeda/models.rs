@@ -32,6 +32,10 @@ pub struct SymbolPartData {
 pub struct Model3dInfo {
     pub uuid: String,
     pub title: String,
+    /// Rotation (degrees) of the 3D model around the footprint's Z axis, as stored by EasyEDA.
+    /// Consumers convert it into their own frame with `crate::util::model_rotation_z`.
+    #[serde(default)]
+    pub rotation_z: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

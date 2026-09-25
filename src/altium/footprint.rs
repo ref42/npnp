@@ -1,15 +1,15 @@
 use serde_json::Value;
 
 use super::pcblib::{
-    CoordPoint, LAYER_BOTTOM, LAYER_BOTTOM_OVERLAY, LAYER_MECHANICAL_1, LAYER_MECHANICAL_2,
-    LAYER_MECHANICAL_5, LAYER_MECHANICAL_6, LAYER_MECHANICAL_9, LAYER_MULTI, LAYER_TOP,
-    LAYER_TOP_OVERLAY, PAD_HOLE_ROUND, PAD_HOLE_SLOT, PAD_HOLE_SQUARE, PAD_SHAPE_OCTAGONAL,
-    PAD_SHAPE_RECTANGULAR, PAD_SHAPE_ROUND, PAD_SHAPE_ROUNDED_RECTANGLE, PcbArc, PcbComponent,
-    PcbComponentBody, PcbExtendedPrimitiveInfo, PcbLibrary, PcbModel, PcbPad, PcbRegion, PcbTrack,
-    stable_guid,
+    CoordPoint, LAYER_BOTTOM, LAYER_BOTTOM_OVERLAY, LAYER_BOTTOM_SOLDER, LAYER_MECHANICAL_1,
+    LAYER_MECHANICAL_2, LAYER_MECHANICAL_5, LAYER_MECHANICAL_6, LAYER_MECHANICAL_9, LAYER_MULTI,
+    LAYER_TOP, LAYER_TOP_OVERLAY, LAYER_TOP_SOLDER, PAD_HOLE_ROUND, PAD_HOLE_SLOT, PAD_HOLE_SQUARE,
+    PAD_SHAPE_OCTAGONAL, PAD_SHAPE_RECTANGULAR, PAD_SHAPE_ROUND, PAD_SHAPE_ROUNDED_RECTANGLE,
+    PcbArc, PcbComponent, PcbComponentBody, PcbExtendedPrimitiveInfo, PcbLibrary, PcbModel, PcbPad,
+    PcbRegion, PcbTrack, stable_guid,
 };
 use crate::error::{AppError, Result};
-use crate::util::{nested_string, sanitize_filename, value_to_string};
+use crate::util::{altium_model_rotation_z, nested_string, sanitize_filename, value_to_string};
 
 const FOOTPRINT_UNIT_TO_MM: f64 = 0.0254;
 const RAW_PER_MIL: f64 = 10_000.0;
@@ -85,6 +85,7 @@ pub fn build_pcblib_from_payload(
                 let mut height: f64 = 10.0;
                 let mut shape = "ROUND".to_string();
                 let mut polygon_points = None;
+                let mut custom_polygon = false;
                 if let Some(Value::Array(shape_array)) = row.get(10) {
                     shape =
                         value_string(shape_array.first()).unwrap_or_else(|| "ROUND".to_string());
@@ -92,6 +93,7 @@ pub fn build_pcblib_from_payload(
                         if let Some(poly_shape) = shape_array.get(1) {
                             let poly_raw_points = parse_path_raw_points(poly_shape);
                             if let Some(poly_bounds) = Bounds::from_raw_points(&poly_raw_points) {
+                                custom_polygon = poly_raw_points.len() >= 3;
                                 width = width.max(poly_bounds.max_x - poly_bounds.min_x);
                                 height = height.max(poly_bounds.max_y - poly_bounds.min_y);
                                 if let Some(rect) = axis_aligned_rect_from_points(&poly_raw_points)
@@ -130,6 +132,7 @@ pub fn build_pcblib_from_payload(
                     layer_code,
                     shape,
                     polygon_points,
+                    custom_polygon,
                     custom_mask_expansion_units: value_f64(row.get(17))
                         .filter(|value| *value > 0.0)
                         .or_else(|| value_f64(row.get(18)).filter(|value| *value > 0.0)),
@@ -407,14 +410,17 @@ pub fn build_pcblib_from_payload(
     };
 
     let mut pad_shape_regions = Vec::new();
+    let mut custom_copper_regions = Vec::new();
     let mut custom_mask_regions = Vec::new();
+    // Solder mask expansions are recorded per custom pad copper region, because that is
+    // the object Altium reads them from (see `custom_mask_expansions` usage below).
     let mut custom_mask_expansions = Vec::new();
 
     for pad_raw in pads {
         let hole_mm = easy_units_to_mm(pad_raw.hole);
-        let is_custom_poly = hole_mm <= 0.000_001
-            && pad_raw.shape.eq_ignore_ascii_case("POLY")
-            && pad_raw.polygon_points.is_some();
+        let is_custom_poly =
+            hole_mm <= 0.000_001 && pad_raw.custom_polygon && pad_raw.polygon_points.is_some();
+        let needs_custom_mask = hole_mm <= 0.000_001 && pad_raw.custom_polygon;
         let (shape, width, height, rotation) = if is_custom_poly {
             (
                 PAD_SHAPE_ROUND,
@@ -460,14 +466,37 @@ pub fn build_pcblib_from_payload(
                 is_keepout: false,
                 additional_params: pad_shape_region_params("MECHANICAL9"),
             });
-            let mask_expansion = if is_custom_poly {
-                pad_raw
-                    .custom_mask_expansion_units
-                    .unwrap_or(CUSTOM_PAD_HOTSPOT_UNITS)
-            } else {
-                0.0
-            };
             if is_custom_poly {
+                let copper_layer = map_pad_layer(pad_raw.layer_code, hole_mm);
+                let copper_layer_name = if copper_layer == LAYER_BOTTOM {
+                    "BOTTOM"
+                } else if copper_layer == LAYER_MULTI {
+                    "MULTILAYER"
+                } else {
+                    "TOP"
+                };
+                custom_copper_regions.push(PcbRegion {
+                    layer: copper_layer,
+                    outline: region_outline.clone(),
+                    kind: 0,
+                    net: None,
+                    unique_id: None,
+                    name: Some(" ".to_string()),
+                    is_locked: false,
+                    is_tenting_top: false,
+                    is_tenting_bottom: false,
+                    is_keepout: false,
+                    additional_params: pad_shape_region_params(copper_layer_name),
+                });
+                // A polygon pad has no real pad shape, so its mask opening is described by
+                // the ExtendedPrimitiveInformation entry emitted for this copper region.
+                custom_mask_expansions.push(
+                    pad_raw
+                        .custom_mask_expansion_units
+                        .unwrap_or(CUSTOM_PAD_HOTSPOT_UNITS),
+                );
+            }
+            if needs_custom_mask {
                 for (mask_layer, v7_layer_name) in mask_region_layers(pad_raw.layer_code, hole_mm) {
                     custom_mask_regions.push(PcbRegion {
                         layer: mask_layer,
@@ -482,7 +511,6 @@ pub fn build_pcblib_from_payload(
                         is_keepout: false,
                         additional_params: pad_shape_region_params(v7_layer_name),
                     });
-                    custom_mask_expansions.push(mask_expansion);
                 }
             }
         }
@@ -570,18 +598,25 @@ pub fn build_pcblib_from_payload(
             });
         }
     }
-    let mask_region_start = component.pads.len()
+    let custom_copper_region_start = component.pads.len()
         + component.tracks.len()
         + component.arcs.len()
         + component.regions.len()
         + pad_shape_regions.len();
     component.regions.extend(pad_shape_regions);
+    component.regions.extend(custom_copper_regions);
     component.regions.extend(custom_mask_regions);
     for (offset, expansion_units) in custom_mask_expansions.into_iter().enumerate() {
         component
             .extended_primitive_information
             .push(PcbExtendedPrimitiveInfo {
-                primitive_index: mask_region_start + offset,
+                // Altium derives a solder mask opening from extended primitive information
+                // only when it is attached to a copper object: its own libraries place the
+                // custom pad shape region on the copper layer and mark it with `TYPE=Mask`
+                // plus the mask expansion. Pointing this entry at the mask layer region
+                // instead leaves every polygon pad without a usable mask opening, because
+                // that region only reproduces the copper outline with no expansion.
+                primitive_index: custom_copper_region_start + offset,
                 object_name: "Region".to_string(),
                 params: vec![
                     ("TYPE".to_string(), "Mask".to_string()),
@@ -600,6 +635,9 @@ pub fn build_pcblib_from_payload(
     if let (Some(model), Some(step_data), Some(extents)) =
         (model_3d.as_ref(), step_bytes, body_extents)
     {
+        // LCEDA does not always author a model with its underside on the board plane, so the
+        // embedded geometry is moved there (see `crate::step_model`).
+        let step_data = crate::step_model::place_step_on_board(step_data);
         let model_id = stable_guid(&format!("{}|{}", component_name, model.uri));
         let model_name = choose_step_model_name(component_name, &model.title);
         component.bodies.push(PcbComponentBody {
@@ -622,7 +660,9 @@ pub fn build_pcblib_from_payload(
             model_2d_rotation: 0.0,
             model_3d_rot_x: 0.0,
             model_3d_rot_y: 0.0,
-            model_3d_rot_z: 0.0,
+            // Without this the embedded STEP lands 90 degrees off on every footprint whose
+            // EasyEDA model is stored rotated (see `altium_model_rotation_z`).
+            model_3d_rot_z: altium_model_rotation_z(model.rotation_z),
             model_3d_dz_raw: 0,
             model_checksum: 0,
             model_name: model_name.clone(),
@@ -643,10 +683,11 @@ pub fn build_pcblib_from_payload(
             model_source: "Undefined".to_string(),
             rotation_x: 0.0,
             rotation_y: 0.0,
-            rotation_z: 0.0,
+            // Altium keeps the model table entry and the body's MODEL.3D.ROTZ in sync.
+            rotation_z: altium_model_rotation_z(model.rotation_z),
             dz_raw: 0,
             checksum: 0,
-            step_data: step_data.to_vec(),
+            step_data,
         });
     }
     library.components.push(component);
@@ -765,10 +806,13 @@ fn parse_footprint_3d_model(payload: &Value) -> Option<Model3dRaw> {
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .collect();
+    // The transform is "<size x>,<size y>,<size z>,<rot z>,<rot y>,<rot x>,<offset x>,<offset y>,...";
+    // the Z rotation is the one EasyEDA applies when it draws the model on the footprint (it matches
+    // the footprint's `c_rotation`), so it has to become the 3D body's rotation.
     if parts.len() >= 6 {
-        result.rotation_x = parts[3].parse().unwrap_or(0.0);
+        result.rotation_z = parts[3].parse().unwrap_or(0.0);
         result.rotation_y = parts[4].parse().unwrap_or(0.0);
-        result.rotation_z = parts[5].parse().unwrap_or(0.0);
+        result.rotation_x = parts[5].parse().unwrap_or(0.0);
     }
     Some(result)
 }
@@ -1386,6 +1430,7 @@ struct PadRaw {
     layer_code: i32,
     shape: String,
     polygon_points: Option<Vec<RawPoint>>,
+    custom_polygon: bool,
     custom_mask_expansion_units: Option<f64>,
 }
 #[derive(Debug, Clone)]
@@ -1718,11 +1763,14 @@ fn pad_shape_region_params(v7_layer: &str) -> Vec<(String, String)> {
 
 fn mask_region_layers(layer_code: i32, hole_mm: f64) -> Vec<(u8, &'static str)> {
     if layer_code == 2 {
-        vec![(LAYER_BOTTOM, "BOTTOM")]
+        vec![(LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")]
     } else if layer_code == 12 || hole_mm > 0.000_001 {
-        vec![(LAYER_TOP, "TOP"), (LAYER_BOTTOM, "BOTTOM")]
+        vec![
+            (LAYER_TOP_SOLDER, "TOPSOLDER"),
+            (LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER"),
+        ]
     } else {
-        vec![(LAYER_TOP, "TOP")]
+        vec![(LAYER_TOP_SOLDER, "TOPSOLDER")]
     }
 }
 
@@ -1730,14 +1778,33 @@ fn mask_region_layers(layer_code: i32, hole_mm: f64) -> Vec<(u8, &'static str)> 
 mod tests {
     use super::{
         DEFAULT_CORNER_RADIUS_PERCENTAGE, ROUNDED_RECT_CORNER_SEGMENTS, RawPoint,
-        build_pcblib_from_payload, normalize_footprint_description, parse_path_raw_points,
-        rectangular_pad_outline,
+        build_pcblib_from_payload, mask_region_layers, normalize_footprint_description,
+        parse_path_raw_points, rectangular_pad_outline,
     };
     use crate::altium::pcblib::{
-        LAYER_MECHANICAL_2, LAYER_MECHANICAL_9, LAYER_MULTI, LAYER_TOP_OVERLAY, PAD_HOLE_ROUND,
-        PAD_HOLE_SLOT, PAD_SHAPE_ROUND,
+        LAYER_BOTTOM_SOLDER, LAYER_MECHANICAL_2, LAYER_MECHANICAL_9, LAYER_MULTI, LAYER_TOP,
+        LAYER_TOP_OVERLAY, LAYER_TOP_SOLDER, PAD_HOLE_ROUND, PAD_HOLE_SLOT, PAD_SHAPE_ROUND,
     };
     use serde_json::json;
+
+    #[test]
+    fn custom_pad_mask_regions_use_solder_layers() {
+        assert_eq!(
+            mask_region_layers(1, 0.0),
+            vec![(LAYER_TOP_SOLDER, "TOPSOLDER")]
+        );
+        assert_eq!(
+            mask_region_layers(2, 0.0),
+            vec![(LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")]
+        );
+        assert_eq!(
+            mask_region_layers(12, 0.0),
+            vec![
+                (LAYER_TOP_SOLDER, "TOPSOLDER"),
+                (LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")
+            ]
+        );
+    }
 
     #[test]
     fn builds_pcblib_primitives_from_easyeda_footprint() {
@@ -1776,6 +1843,31 @@ mod tests {
     }
 
     #[test]
+    fn embeds_the_step_model_resting_on_the_board_plane() {
+        // A model centred on Z, like C2904739 (SOP-16) and C9864 (ESOP-8), whose geometry sinks
+        // about 0.8 mm into the board when it is embedded untouched.
+        let mut step = String::from(
+            "ISO-10303-21;\nDATA;\n#900 = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, 1.2 ) ) ;\n",
+        );
+        for index in 0..40 {
+            step.push_str(&format!(
+                "#{index} = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, -0.83 ) ) ;\n"
+            ));
+        }
+        step.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
+            "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"192.913,236.22,0,0,0,0,0,0,0"}}});
+
+        let library = build_pcblib_from_payload(&payload, "ESOP-8", Some(step.as_bytes())).unwrap();
+        let embedded = String::from_utf8(library.models[0].step_data.clone()).unwrap();
+
+        assert!(!embedded.contains("-0.83"));
+        assert!(embedded.contains("0.000000000"));
+        assert!(embedded.contains("2.030000000"));
+    }
+
+    #[test]
     fn embeds_resolved_step_without_payload_model_metadata() {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#}});
@@ -1807,14 +1899,129 @@ mod tests {
         let component = &library.components[0];
         assert_eq!(component.pads.len(), 1);
         assert_eq!(component.pads[0].shape_top, PAD_SHAPE_ROUND);
-        assert_eq!(component.regions.len(), 2);
+        assert_eq!(component.regions.len(), 3);
         assert!(
             component
                 .regions
                 .iter()
                 .any(|region| region.layer == LAYER_MECHANICAL_9 && region.outline.len() == 6)
         );
+        assert!(
+            component
+                .regions
+                .iter()
+                .any(|region| region.layer == LAYER_TOP)
+        );
         assert_eq!(component.extended_primitive_information.len(), 1);
+        assert_eq!(
+            component.extended_primitive_information[0].primitive_index,
+            component.pads.len() + component.tracks.len() + component.arcs.len() + 1
+        );
+    }
+
+    #[test]
+    fn applies_easyeda_model_rotation_to_the_component_body() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
+            "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"236.22,192.913,0,90,0,0,0,0,0"}}});
+        let library =
+            build_pcblib_from_payload(&payload, "SOP-8", Some(b"ISO-10303-21;END-ISO-10303-21;"))
+                .unwrap();
+        let body = &library.components[0].bodies[0];
+
+        // EasyEDA stores 90 degrees; Altium's footprint frame is the Y mirror of EasyEDA's, so the
+        // body keeps that angle (KiCad, whose frame matches EasyEDA's, gets 270 instead).
+        assert_eq!(body.model_3d_rot_z, 90.0);
+        assert_eq!(library.models[0].rotation_z, 90.0);
+    }
+
+    #[test]
+    fn keeps_unrotated_models_unrotated() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
+            "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"192.913,236.22,0,0,0,0,0,0,0"}}});
+        let library =
+            build_pcblib_from_payload(&payload, "SOIC-8", Some(b"ISO-10303-21;END-ISO-10303-21;"))
+                .unwrap();
+        let body = &library.components[0].bodies[0];
+
+        assert_eq!(body.model_3d_rot_z, 0.0);
+    }
+
+    #[test]
+    fn places_a_real_rotated_model_on_its_pads() {
+        // C668205 (SOP-8_L5.0-W4.0) stores its model at 90 degrees. Rendering the exported KiCad
+        // footprint with `kicad-cli pcb render` shows the leads only reaching the pads with a 270
+        // degree rotation in KiCad's frame, which is the 90 degrees Altium's mirrored frame needs.
+        let payload: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/lceda_footprint_c668205.json"
+        ))
+        .unwrap();
+        let library =
+            build_pcblib_from_payload(&payload, "SOP-8", Some(b"ISO-10303-21;END-ISO-10303-21;"))
+                .unwrap();
+        let body = &library.components[0].bodies[0];
+
+        assert_eq!(body.model_3d_rot_z, 90.0);
+        assert_eq!(library.models[0].rotation_z, 90.0);
+    }
+
+    #[test]
+    fn binds_custom_pad_mask_expansion_to_the_copper_region() {
+        let payload: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/lceda_footprint_c29073231.json"
+        ))
+        .unwrap();
+        let library =
+            build_pcblib_from_payload(&payload, "QFN-19_L5.0-W3.0_CD4583GQVE", None).unwrap();
+        let component = &library.components[0];
+
+        // C29073231 has five irregular (polygon) pads: 1, 6, 7, 9 and 15.
+        let copper_regions: Vec<&crate::altium::pcblib::PcbRegion> = component
+            .regions
+            .iter()
+            .filter(|region| region.layer == LAYER_TOP)
+            .collect();
+        let mask_regions: Vec<&crate::altium::pcblib::PcbRegion> = component
+            .regions
+            .iter()
+            .filter(|region| region.layer == LAYER_TOP_SOLDER)
+            .collect();
+        assert_eq!(copper_regions.len(), 5);
+        assert_eq!(mask_regions.len(), 5);
+
+        let region_primitive_start =
+            component.pads.len() + component.tracks.len() + component.arcs.len();
+        assert_eq!(
+            component.extended_primitive_information.len(),
+            copper_regions.len()
+        );
+        for info in &component.extended_primitive_information {
+            let region = &component.regions[info.primitive_index - region_primitive_start];
+            assert_eq!(
+                region.layer, LAYER_TOP,
+                "the mask entry must reference the pad copper region, not its mask region"
+            );
+            assert_eq!(info.object_name, "Region");
+            assert!(
+                info.params
+                    .contains(&("TYPE".to_string(), "Mask".to_string()))
+            );
+            assert!(info.params.contains(&(
+                "SOLDERMASKEXPANSION_MANUAL".to_string(),
+                "1.968mil".to_string()
+            )));
+            assert!(
+                info.params
+                    .contains(&("PASTEMASKEXPANSIONMODE".to_string(), "None".to_string()))
+            );
+            // Every irregular pad keeps an explicit opening region as a fallback.
+            assert!(
+                mask_regions
+                    .iter()
+                    .any(|mask| mask.outline == region.outline)
+            );
+        }
     }
 
     #[test]
@@ -1842,7 +2049,7 @@ mod tests {
         assert_eq!(component.pads[0].size_top.y, 190_000);
         assert_eq!(component.pads[0].location.x, -280_050);
         assert_eq!(component.pads[0].location.y, 1_980);
-        assert_eq!(component.regions.len(), 2);
+        assert_eq!(component.regions.len(), 4);
         assert!(
             component
                 .regions
@@ -1857,7 +2064,18 @@ mod tests {
                 .filter(|region| region.layer == LAYER_MECHANICAL_9)
                 .all(|region| region.outline.len() == ROUNDED_RECT_CORNER_SEGMENTS * 4 + 6)
         );
+        // These polygon pads are plain rectangles, so they become real rounded rectangle
+        // pads that already carry the solder mask expansion themselves: no copper region
+        // (and therefore no mask entry) is needed for them.
         assert_eq!(component.extended_primitive_information.len(), 0);
+        assert!(
+            component
+                .regions
+                .iter()
+                .filter(|region| region.layer == LAYER_TOP_SOLDER)
+                .count()
+                == 2
+        );
     }
 
     #[test]

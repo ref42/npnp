@@ -8,6 +8,7 @@ pub mod kicad;
 pub mod lceda;
 pub mod lcsc;
 pub mod metadata;
+pub mod step_model;
 pub mod util;
 
 pub use altium::{footprint, merge, pcblib, schlib};

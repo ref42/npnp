@@ -30,6 +30,8 @@ pub(crate) struct PcblibComponentRecord {
     pub(crate) parameters: Vec<u8>,
     pub(crate) wide_strings: Vec<u8>,
     pub(crate) data: Vec<u8>,
+    pub(crate) extended_primitive_information_header: Option<Vec<u8>>,
+    pub(crate) extended_primitive_information: Option<Vec<u8>>,
     pub(crate) unique_id_primitive_information: Vec<u8>,
 }
 
@@ -153,6 +155,16 @@ pub(crate) fn read_pcblib_records(path: &Path) -> Result<PcblibRecordLibrary> {
             &mut compound,
             &format!("/{section_key}/UniqueIdPrimitiveInformation/Data"),
         )?;
+        // Custom pad solder mask openings are described by the extended primitive
+        // information stream, so it has to survive merge/append exports as well.
+        let extended_primitive_information_header = read_optional_stream_bytes(
+            &mut compound,
+            &format!("/{section_key}/ExtendedPrimitiveInformation/Header"),
+        );
+        let extended_primitive_information = read_optional_stream_bytes(
+            &mut compound,
+            &format!("/{section_key}/ExtendedPrimitiveInformation/Data"),
+        );
         let _ = first_param_block_pairs(&parameters, "PcbLib parameters")?;
         components.push(PcblibComponentRecord {
             name,
@@ -160,6 +172,8 @@ pub(crate) fn read_pcblib_records(path: &Path) -> Result<PcblibRecordLibrary> {
             parameters,
             wide_strings,
             data,
+            extended_primitive_information_header,
+            extended_primitive_information,
             unique_id_primitive_information,
         });
     }
@@ -263,6 +277,23 @@ pub(crate) fn write_pcblib_records(
             &format!("/{section_key}/Data"),
             &component.data,
         )?;
+        if let Some(extended_primitive_information) = &component.extended_primitive_information {
+            let header = component
+                .extended_primitive_information_header
+                .clone()
+                .unwrap_or_else(|| storage_header_bytes(0));
+            compound.create_storage(format!("/{section_key}/ExtendedPrimitiveInformation/"))?;
+            write_stream(
+                &mut compound,
+                &format!("/{section_key}/ExtendedPrimitiveInformation/Header"),
+                &header,
+            )?;
+            write_stream(
+                &mut compound,
+                &format!("/{section_key}/ExtendedPrimitiveInformation/Data"),
+                extended_primitive_information,
+            )?;
+        }
         compound.create_storage(format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
         write_stream(
             &mut compound,
@@ -458,6 +489,10 @@ fn read_stream_bytes(compound: &mut CompoundFile<File>, path: &str) -> Result<Ve
     use std::io::Read as _;
     stream.read_to_end(&mut data)?;
     Ok(data)
+}
+
+fn read_optional_stream_bytes(compound: &mut CompoundFile<File>, path: &str) -> Option<Vec<u8>> {
+    read_stream_bytes(compound, path).ok()
 }
 
 fn resolve_section_key(
@@ -1208,6 +1243,40 @@ mod tests {
         assert_eq!(round_trip.components.len(), 1);
         assert_eq!(round_trip.components[0].name, "ROUNDTRIP_FOOTPRINT");
         assert_eq!(round_trip.models.len(), 1);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn merged_pcblib_keeps_extended_primitive_information() {
+        let payload: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/lceda_footprint_c29073231.json"
+        ))
+        .expect("footprint fixture");
+        let library = build_pcblib_from_payload(&payload, "MASK_FOOTPRINT", None)
+            .expect("build footprint library");
+        assert!(
+            !library.components[0]
+                .extended_primitive_information
+                .is_empty(),
+            "irregular pads must produce mask entries"
+        );
+
+        let records = pcblib_records_from_library(&library).expect("capture PcbLib records");
+        let captured = records.components[0]
+            .extended_primitive_information
+            .clone()
+            .expect("extended primitive information must be captured");
+
+        let path = temp_path("export_merge_pcblib_mask", "PcbLib");
+        write_pcblib_records(&records, &path).expect("write merged PcbLib");
+        let round_trip = read_pcblib_records(&path).expect("read merged PcbLib");
+        assert_eq!(
+            round_trip.components[0]
+                .extended_primitive_information
+                .as_deref(),
+            Some(captured.as_slice()),
+            "merged libraries must keep the custom pad mask entries"
+        );
         fs::remove_file(path).ok();
     }
 }

@@ -1,1 +1,1 @@
-flags=["-Z, threads=20", "embedmetadata=no"]
+flags = ["-Z", "embed-metadata=no"]

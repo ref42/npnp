@@ -63,7 +63,7 @@ jobs:
           ref: ${{ env.CHECKOUT_REF }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@nightly
         with:
           targets: ${{ matrix.target }}
 

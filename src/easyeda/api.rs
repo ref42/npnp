@@ -38,6 +38,10 @@ pub struct EasyedaApi {
     step_cache: DownloadCache,
     component_gate: Arc<Mutex<RequestGate>>,
     model_gate: Arc<Mutex<RequestGate>>,
+    /// Which of [`COMPONENT_API_HOSTS`] answered last. The primary host blocks
+    /// whole networks — it answers 403 with an HTML page for every id — so the
+    /// mirror is remembered instead of being rediscovered for every component.
+    preferred_host: std::sync::atomic::AtomicUsize,
 }
 
 /// Where a downloaded model goes.
@@ -100,6 +104,7 @@ impl EasyedaApi {
             step_cache: Arc::new(Mutex::new(HashMap::new())),
             component_gate: Arc::new(Mutex::new(RequestGate::new())),
             model_gate: Arc::new(Mutex::new(RequestGate::new())),
+            preferred_host: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -128,17 +133,53 @@ impl EasyedaApi {
         Err(last_error.expect("retry loop should preserve the last error"))
     }
 
+    /// The hosts that serve the same component API.
+    ///
+    /// `easyeda.com` is the international site and `lceda.cn` is the Chinese
+    /// mirror of the same EasyEDA data. The international host blocks whole
+    /// networks (403 and an HTML page for every id, from a proxy or not) while
+    /// the mirror keeps answering, so a blocked host has to be a reason to try
+    /// the other one rather than to wait on it.
+    const COMPONENT_API_HOSTS: [&'static str; 2] = ["https://easyeda.com", "https://lceda.cn"];
+
     async fn get_component_data_once(&self, lcsc_id: &str) -> Result<ComponentData> {
+        use std::sync::atomic::Ordering;
+        let preferred = self.preferred_host.load(Ordering::Relaxed);
+        let mut blocked = None;
+        for offset in 0..Self::COMPONENT_API_HOSTS.len() {
+            let index = (preferred + offset) % Self::COMPONENT_API_HOSTS.len();
+            let host = Self::COMPONENT_API_HOSTS[index];
+            match self.fetch_component_from(host, lcsc_id).await {
+                Ok(data) => {
+                    self.preferred_host.store(index, Ordering::Relaxed);
+                    return Ok(data);
+                }
+                Err(error) if is_upstream_block_error(&error) => {
+                    log::warn!("{} blocked {}: trying the next host", host, lcsc_id);
+                    blocked = Some(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        // Every host refused: this is when the batch really does have to wait.
+        extend_request_cooldown(
+            &self.component_gate,
+            Duration::from_millis(UPSTREAM_BLOCK_COOLDOWN_MS),
+        )
+        .await;
+        Err(blocked.unwrap_or_else(|| {
+            EasyedaError::InvalidData(format!("no API host answered for {lcsc_id}")).into()
+        }))
+    }
+
+    async fn fetch_component_from(&self, host: &str, lcsc_id: &str) -> Result<ComponentData> {
         wait_for_request_slot(
             &self.component_gate,
             Duration::from_millis(COMPONENT_REQUEST_INTERVAL_MS),
         )
         .await;
 
-        let url = format!(
-            "https://easyeda.com/api/products/{}/components?version=6.4.19.5",
-            lcsc_id
-        );
+        let url = format!("{host}/api/products/{lcsc_id}/components?version=6.4.19.5");
 
         log::debug!("Fetching component data for {}", lcsc_id);
 
@@ -163,13 +204,8 @@ impl EasyedaApi {
                 return Err(EasyedaError::ComponentNotFound(lcsc_id.to_string()).into());
             }
             let message = summarize_http_error_body(message);
-            if is_upstream_block_status(status, &message) {
-                extend_request_cooldown(
-                    &self.component_gate,
-                    Duration::from_millis(UPSTREAM_BLOCK_COOLDOWN_MS),
-                )
-                .await;
-            }
+            // The caller decides what a block means: one host refusing is a
+            // reason to ask the mirror, not to hold the whole batch.
             return Err(EasyedaError::HttpStatus {
                 lcsc_id: lcsc_id.to_string(),
                 status,
@@ -707,6 +743,17 @@ impl Default for EasyedaApi {
     }
 }
 
+/// Whether the host refused the request outright, which is what makes another
+/// host worth trying.
+fn is_upstream_block_error(error: &AppError) -> bool {
+    matches!(
+        error,
+        AppError::Easyeda(EasyedaError::HttpStatus {
+            status, message, ..
+        }) if is_upstream_block_status(*status, message)
+    )
+}
+
 fn should_retry_app_error(error: &AppError) -> bool {
     match error {
         AppError::Easyeda(EasyedaError::ApiRequest(error)) => {
@@ -894,5 +941,20 @@ mod tests {
             retry_delay_for_error(&error, 1),
             Duration::from_millis(UPSTREAM_BLOCK_RETRY_DELAY_MS * 2)
         );
+    }
+
+    #[test]
+    fn only_a_blanket_refusal_sends_the_request_to_the_other_host() {
+        let blocked = AppError::Easyeda(EasyedaError::HttpStatus {
+            lcsc_id: "C1".to_string(),
+            status: StatusCode::FORBIDDEN,
+            message: "upstream returned an HTML error page".to_string(),
+        });
+        assert!(is_upstream_block_error(&blocked));
+
+        // A part that does not exist is not a reason to ask the mirror: the
+        // answer would be the same, and two hosts would be asked per typo.
+        let missing = AppError::Easyeda(EasyedaError::ComponentNotFound("C1".to_string()));
+        assert!(!is_upstream_block_error(&missing));
     }
 }

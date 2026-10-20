@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -160,13 +161,58 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     let parallel = options.parallel.max(1).min(ids.len().max(1));
     let progress = ProgressBar::new(ids.len() as u64);
     progress.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} [{bar:24.cyan/blue}] {pos}/{len} | ok:{msg}",
-        )
-        .expect("valid KiCad progress template")
-        .progress_chars("##-"),
+        ProgressStyle::with_template("{spinner:.green} [{bar:24.cyan/blue}] {pos}/{len} | {msg}")
+            .expect("valid KiCad progress template")
+            .progress_chars("##-"),
     );
-    progress.enable_steady_tick(Duration::from_millis(250));
+
+    // A part that is waiting on a slow or throttled store can sit for minutes,
+    // and a bar that only moves when something finishes reads as a hang. So the
+    // bar is fed from outside the tasks: the ids being fetched right now, the
+    // tally so far, and the elapsed time. This is the same thing seex shows as
+    // "Fetching C1234".
+    let in_flight: Arc<Mutex<BTreeSet<String>>> = Arc::new(Mutex::new(BTreeSet::new()));
+    let succeeded = Arc::new(AtomicUsize::new(0));
+    let failed_count = Arc::new(AtomicUsize::new(0));
+    let already_skipped = summary.skipped;
+    let ticker = {
+        let progress = progress.clone();
+        let in_flight = Arc::clone(&in_flight);
+        let succeeded = Arc::clone(&succeeded);
+        let failed_count = Arc::clone(&failed_count);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(500));
+            // Redrawing only when the line changes keeps a slow part from
+            // scrolling the terminal once a second; the spinner is what shows
+            // that the run is alive.
+            let mut last = String::new();
+            loop {
+                tick.tick().await;
+                let (first, count) = {
+                    let guard = match in_flight.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    (guard.iter().next().cloned(), guard.len())
+                };
+                let fetching = match (first, count) {
+                    (None, _) => "waiting for the store".to_string(),
+                    (Some(id), 1) => format!("fetching {id}"),
+                    (Some(id), n) => format!("fetching {id} +{}", n - 1),
+                };
+                let message = format!(
+                    "ok:{} skip:{} fail:{} | {fetching}",
+                    succeeded.load(Ordering::Relaxed),
+                    already_skipped,
+                    failed_count.load(Ordering::Relaxed),
+                );
+                if message != last {
+                    progress.set_message(message.clone());
+                    last = message;
+                }
+            }
+        })
+    };
     let semaphore = Arc::new(Semaphore::new(parallel));
     let mut join_set = JoinSet::new();
 
@@ -177,11 +223,15 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
         let model_status = model_status.clone();
         let export_options = export_options.clone();
         let semaphore = semaphore.clone();
+        let in_flight = Arc::clone(&in_flight);
         join_set.spawn(async move {
             let _permit = semaphore
                 .acquire_owned()
                 .await
                 .expect("KiCad batch semaphore should remain open");
+            if let Ok(mut guard) = in_flight.lock() {
+                guard.insert(id.clone());
+            }
             let result = match tokio::time::timeout(
                 COMPONENT_TIMEOUT,
                 export_one_kicad_component(
@@ -199,10 +249,13 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                 // One stuck part must not hold the whole batch: it fails, and the
                 // run carries on with the rest.
                 Err(_) => Err(AppError::Other(format!(
-                    "{id}: gave up after {}s",
+                    "gave up after {}s",
                     COMPONENT_TIMEOUT.as_secs()
                 ))),
             };
+            if let Ok(mut guard) = in_flight.lock() {
+                guard.remove(&id);
+            }
             (id, result)
         });
     }
@@ -212,34 +265,25 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
         match joined {
             Ok((id, Ok(exported))) => {
                 append_checkpoint(&checkpoint_path, &id)?;
+                succeeded.fetch_add(1, Ordering::Relaxed);
                 summary.success += 1;
                 summary.timings.add(exported.timings);
                 summary.models.record(exported.model);
-                progress.set_message(format!(
-                    "skip:{} fail:{} | last:{}",
-                    summary.skipped, summary.failed, id
-                ));
                 progress.inc(1);
             }
             Ok((id, Err(err))) => {
+                failed_count.fetch_add(1, Ordering::Relaxed);
                 summary.failed += 1;
                 summary.failed_ids.push(id.clone());
                 summary.failure_details.push(format!("{id}: {err}"));
-                progress.set_message(format!(
-                    "ok:{} skip:{} fail:{} | last:{}",
-                    summary.success, summary.skipped, summary.failed, id
-                ));
                 progress.inc(1);
                 if first_error.is_none() {
                     first_error = Some(err);
                 }
             }
             Err(err) => {
+                failed_count.fetch_add(1, Ordering::Relaxed);
                 summary.failed += 1;
-                progress.set_message(format!(
-                    "ok:{} skip:{} fail:{} | task error",
-                    summary.success, summary.skipped, summary.failed
-                ));
                 progress.inc(1);
                 let batch_err = AppError::Other(format!("KiCad batch task join failed: {err}"));
                 summary.failure_details.push(batch_err.to_string());
@@ -250,6 +294,7 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
         }
     }
 
+    ticker.abort();
     progress.finish_and_clear();
 
     if summary.failed > 0 && !options.continue_on_error {

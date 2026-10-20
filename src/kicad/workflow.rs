@@ -374,7 +374,11 @@ fn pending_ids(ids: Vec<String>, completed: &HashSet<String>) -> (Vec<String>, u
 /// flag would mean nothing on this path: exporting into a directory that already
 /// holds a library would quietly merge the two.
 fn reject_existing_library(options: &KicadBatchOptions, manager: &LibraryManager) -> Result<()> {
-    if options.append {
+    // `--force` is already the caller saying "write into what is there", and
+    // `--append` says the same for a library it means to add to. Rejecting the
+    // library in either case would leave no way to finish a run that was
+    // interrupted half way.
+    if options.append || options.export.force {
         return Ok(());
     }
 

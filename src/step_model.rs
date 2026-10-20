@@ -27,6 +27,8 @@
 //!
 //! Call [`place_step_on_board`] before writing or embedding a downloaded STEP model.
 
+use std::borrow::Cow;
+use std::io::{self, Write};
 use std::ops::Range;
 
 /// Share of the lowest vertices ignored when reading the underside of a part.
@@ -61,33 +63,61 @@ impl ModelPoint {
 ///
 /// Returns the input unchanged when the model is already correct, when it carries too little
 /// geometry to measure, or when a measured correction is implausible (see the constants above).
-pub fn place_step_on_board(step_data: &[u8]) -> Vec<u8> {
+/// Most models need no correction, so the result borrows the input rather than copying a
+/// model-sized buffer for every part in a batch.
+pub fn place_step_on_board(step_data: &[u8]) -> Cow<'_, [u8]> {
+    let Some((points, shift)) = placement_for(step_data) else {
+        return Cow::Borrowed(step_data);
+    };
+    let mut placed = Vec::with_capacity(step_data.len());
+    write_shifted(step_data, &points, shift, &mut placed).expect("writing into memory cannot fail");
+    Cow::Owned(placed)
+}
+
+/// Writes the model with its placement applied.
+///
+/// A batch can hand the corrected model straight to a file instead of building the
+/// whole corrected text in memory first, which is another model-sized buffer per part
+/// in flight.
+pub fn write_placed_step<W: Write>(step_data: &[u8], writer: &mut W) -> io::Result<()> {
+    match placement_for(step_data) {
+        Some((points, shift)) => write_shifted(step_data, &points, shift, writer),
+        None => writer.write_all(step_data),
+    }
+}
+
+/// The correction a model needs, or `None` when it is already correct.
+fn placement_for(step_data: &[u8]) -> Option<(Vec<ModelPoint>, [f64; 3])> {
     let points = parse_model_points(step_data);
     if points.len() < MIN_VERTICES {
-        return step_data.to_vec();
+        return None;
     }
 
     let lift = underside_lift_mm(&points);
     let [shift_x, shift_y] = centring_offset_mm(&points);
     if lift == 0.0 && shift_x == 0.0 && shift_y == 0.0 {
-        return step_data.to_vec();
+        return None;
     }
 
-    let shift = [shift_x, shift_y, lift];
-    let mut shifted = Vec::with_capacity(step_data.len());
+    Some((points, [shift_x, shift_y, lift]))
+}
+
+fn write_shifted<W: Write>(
+    step_data: &[u8],
+    points: &[ModelPoint],
+    shift: [f64; 3],
+    writer: &mut W,
+) -> io::Result<()> {
     let mut cursor = 0usize;
-    for point in &points {
+    for point in points {
         for axis in 0..3 {
             let span = &point.spans[axis];
-            shifted.extend_from_slice(&step_data[cursor..span.start]);
-            shifted.extend_from_slice(
-                format_step_real(point.coordinates[axis] + shift[axis]).as_bytes(),
-            );
+            writer.write_all(&step_data[cursor..span.start])?;
+            writer.write_all(format_step_real(point.coordinates[axis] + shift[axis]).as_bytes())?;
             cursor = span.end;
         }
     }
-    shifted.extend_from_slice(&step_data[cursor..]);
-    shifted
+    writer.write_all(&step_data[cursor..])
 }
 
 /// How far a model has to move up to rest on the board plane, in millimetres.
@@ -172,7 +202,11 @@ fn parse_model_points(step_data: &[u8]) -> Vec<ModelPoint> {
 
         points.push(ModelPoint {
             coordinates: [values[0].0, values[1].0, values[2].0],
-            spans: [values[0].1.clone(), values[1].1.clone(), values[2].1.clone()],
+            spans: [
+                values[0].1.clone(),
+                values[1].1.clone(),
+                values[2].1.clone(),
+            ],
         });
     }
 
@@ -370,7 +404,11 @@ mod tests {
         let points = (0..400)
             .map(|index| {
                 let t = index as f64 / 399.0;
-                [-5.8 + 11.6 * t, 14.2 * (t * 5.0).fract(), 4.5 * (t * 3.0).fract()]
+                [
+                    -5.8 + 11.6 * t,
+                    14.2 * (t * 5.0).fract(),
+                    4.5 * (t * 3.0).fract(),
+                ]
             })
             .collect::<Vec<_>>();
         let step_data = step_with(&points);

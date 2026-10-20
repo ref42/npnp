@@ -18,6 +18,10 @@ use crate::kicad::{
 use crate::lcsc::LcscClient;
 use crate::metadata::ResolvedMetadata;
 
+/// A component that has not answered within this is failed and skipped, so one
+/// stuck part cannot hold the whole batch.
+const COMPONENT_TIMEOUT: Duration = Duration::from_secs(180);
+
 #[derive(Debug, Clone)]
 pub struct KicadSingleOptions {
     pub lcsc_id: String,
@@ -34,6 +38,10 @@ pub struct KicadBatchOptions {
     pub english_metadata: bool,
     pub parallel: usize,
     pub continue_on_error: bool,
+    /// Add to the library that is already in the output directory. Without it
+    /// the export owns the library and refuses to write into one that is there,
+    /// which is what Altium's append flag means as well.
+    pub append: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +111,9 @@ pub async fn export_kicad_single(options: KicadSingleOptions) -> Result<KicadBat
         english_metadata: options.english_metadata,
         parallel: 1,
         continue_on_error: false,
+        // One component named one library: it is written into whatever is there,
+        // which is how the CLI's --symbol-lib/--footprint-lib work.
+        append: true,
     };
     export_kicad_batch(batch_options).await
 }
@@ -113,25 +124,23 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     let api = Arc::new(EasyedaApi::new());
     let lcsc_client = options.english_metadata.then(LcscClient::new).map(Arc::new);
     let manager = Arc::new(LibraryManager::from_options(&options.library)?);
+    reject_existing_library(&options, &manager)?;
     manager.create_directories()?;
 
     let model_status = Arc::new(ModelStageStatus::new());
     let export_options = Arc::new(options.export.clone());
-    let checkpoint_path = kicad_checkpoint_path(&options.library.output, &options.export);
-    let completed = if options.export.force {
-        HashSet::new()
-    } else {
+    let checkpoint_path =
+        kicad_checkpoint_path(manager.lib_name(), &options.library.output, &options.export);
+    // The checkpoint is the record of what has already been exported into this
+    // library, so it decides what to skip on its own. `force` says to replace
+    // entries that are there, which is a different job: reading it as "do the
+    // work again" is what made a repeat export re-download everything.
+    let completed = if library_present(&options, &manager) {
         load_checkpoint(&checkpoint_path)?
+    } else {
+        HashSet::new()
     };
-    let mut ids = Vec::new();
-    let mut skipped = 0usize;
-    for id in options.ids.clone() {
-        if completed.contains(&normalize_checkpoint_id(&id)) {
-            skipped += 1;
-        } else {
-            ids.push(id);
-        }
-    }
+    let (ids, skipped) = pending_ids(options.ids.clone(), &completed);
     let mut summary = KicadBatchSummary {
         total: ids.len() + skipped,
         skipped,
@@ -173,15 +182,27 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                 .acquire_owned()
                 .await
                 .expect("KiCad batch semaphore should remain open");
-            let result = export_one_kicad_component(
-                &api,
-                lcsc_client.as_deref(),
-                &manager,
-                &export_options,
-                &model_status,
-                &id,
+            let result = match tokio::time::timeout(
+                COMPONENT_TIMEOUT,
+                export_one_kicad_component(
+                    &api,
+                    lcsc_client.as_deref(),
+                    &manager,
+                    &export_options,
+                    &model_status,
+                    &id,
+                ),
             )
-            .await;
+            .await
+            {
+                Ok(result) => result,
+                // One stuck part must not hold the whole batch: it fails, and the
+                // run carries on with the rest.
+                Err(_) => Err(AppError::Other(format!(
+                    "{id}: gave up after {}s",
+                    COMPONENT_TIMEOUT.as_secs()
+                ))),
+            };
             (id, result)
         });
     }
@@ -243,7 +264,14 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     Ok(summary)
 }
 
-fn kicad_checkpoint_path(output: &Path, options: &KicadExportOptions) -> PathBuf {
+/// The checkpoint file for one library and one set of targets. The library is
+/// part of the name because two libraries written into one directory are two
+/// different sets of exported ids.
+fn kicad_checkpoint_path(
+    library_name: &str,
+    output: &Path,
+    options: &KicadExportOptions,
+) -> PathBuf {
     let mut key = Vec::new();
     if options.full || options.symbol {
         key.push("symbol");
@@ -254,7 +282,98 @@ fn kicad_checkpoint_path(output: &Path, options: &KicadExportOptions) -> PathBuf
     if options.full || options.model_3d {
         key.push("3d");
     }
-    output.join(format!(".kicad_checkpoint_{}", key.join("_")))
+    output.join(format!(
+        ".kicad_checkpoint_{library_name}_{}",
+        key.join("_")
+    ))
+}
+
+/// Whether the outputs the checkpoint would be talking about are still on disk.
+///
+/// A checkpoint means "these ids are in this library", so it only counts while
+/// the library is there: deleting it is how a user asks for everything to be
+/// exported again. An absent 3D model directory does not count, because a part
+/// without a model is ordinary and must not stop the rest from being skipped.
+fn library_present(options: &KicadBatchOptions, manager: &LibraryManager) -> bool {
+    let full = options.export.full;
+    if options.export.model_3d && !full {
+        // A 3D-only export is judged by its models: it writes nothing else.
+        return holds_extension(manager.model_lib_dir(), "step");
+    }
+    let symbols = (options.export.symbol || full) && manager.get_symbol_lib_path().exists();
+    let footprints = (options.export.footprint || full)
+        && holds_extension(manager.footprint_lib_dir(), "kicad_mod");
+    symbols || footprints
+}
+
+/// The ids still to export, and how many the checkpoint already covers.
+fn pending_ids(ids: Vec<String>, completed: &HashSet<String>) -> (Vec<String>, usize) {
+    let mut pending = Vec::new();
+    let mut skipped = 0usize;
+    for id in ids {
+        if completed.contains(&normalize_checkpoint_id(&id)) {
+            skipped += 1;
+        } else {
+            pending.push(id);
+        }
+    }
+    (pending, skipped)
+}
+
+/// Refuses to write into a library that is already there unless the caller asked
+/// to append, the same rule — and for the same reason — as the Altium export
+/// refusing an existing merged library.
+///
+/// The writers themselves add what is missing to an existing library and leave
+/// the rest alone, which *is* the append behaviour, so without this check the
+/// flag would mean nothing on this path: exporting into a directory that already
+/// holds a library would quietly merge the two.
+fn reject_existing_library(options: &KicadBatchOptions, manager: &LibraryManager) -> Result<()> {
+    if options.append {
+        return Ok(());
+    }
+
+    let full = options.export.full;
+    let mut existing = Vec::new();
+    if options.export.symbol || full {
+        let path = manager.get_symbol_lib_path();
+        if path.exists() {
+            existing.push(path.display().to_string());
+        }
+    }
+    if options.export.footprint || full {
+        let dir = manager.footprint_lib_dir();
+        if holds_extension(dir, "kicad_mod") {
+            existing.push(dir.display().to_string());
+        }
+    }
+    if options.export.model_3d || full {
+        let dir = manager.model_lib_dir();
+        if holds_extension(dir, "step") {
+            existing.push(dir.display().to_string());
+        }
+    }
+
+    if existing.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::Other(format!(
+        "KiCad library already exists: {}. Turn on Append to add components to it, or choose another library name.",
+        existing.join(", ")
+    )))
+}
+
+/// Whether a directory holds at least one file with this extension, which is what
+/// makes it an existing library rather than an empty directory the export may as
+/// well fill.
+fn holds_extension(dir: &Path, extension: &str) -> bool {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some(extension)
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn load_checkpoint(path: &Path) -> Result<HashSet<String>> {

@@ -3,10 +3,10 @@ use serde_json::Value;
 use super::pcblib::{
     CoordPoint, LAYER_BOTTOM, LAYER_BOTTOM_OVERLAY, LAYER_BOTTOM_SOLDER, LAYER_MECHANICAL_1,
     LAYER_MECHANICAL_2, LAYER_MECHANICAL_5, LAYER_MECHANICAL_6, LAYER_MECHANICAL_9, LAYER_MULTI,
-    LAYER_TOP, LAYER_TOP_OVERLAY, LAYER_TOP_SOLDER, PAD_HOLE_ROUND, PAD_HOLE_SLOT, PAD_HOLE_SQUARE,
-    PAD_SHAPE_OCTAGONAL, PAD_SHAPE_RECTANGULAR, PAD_SHAPE_ROUND, PAD_SHAPE_ROUNDED_RECTANGLE,
-    PcbArc, PcbComponent, PcbComponentBody, PcbExtendedPrimitiveInfo, PcbLibrary, PcbModel, PcbPad,
-    PcbRegion, PcbTrack, stable_guid,
+    LAYER_TOP, LAYER_TOP_OVERLAY, LAYER_TOP_SOLDER, ModelData, PAD_HOLE_ROUND, PAD_HOLE_SLOT,
+    PAD_HOLE_SQUARE, PAD_SHAPE_OCTAGONAL, PAD_SHAPE_RECTANGULAR, PAD_SHAPE_ROUND,
+    PAD_SHAPE_ROUNDED_RECTANGLE, PcbArc, PcbComponent, PcbComponentBody, PcbExtendedPrimitiveInfo,
+    PcbLibrary, PcbModel, PcbPad, PcbRegion, PcbTrack, stable_guid,
 };
 use crate::error::{AppError, Result};
 use crate::util::{altium_model_rotation_z, nested_string, sanitize_filename, value_to_string};
@@ -21,14 +21,36 @@ const DEFAULT_CORNER_RADIUS_PERCENTAGE: u8 = 25;
 const MIN_COMPONENT_BODY_HEIGHT_MM: f64 = 0.2;
 const CUSTOM_PAD_HOTSPOT_UNITS: f64 = 2.3792;
 const DEFAULT_PAD_SOLDER_MASK_EXPANSION_MIL: f64 = 1.969;
+
+/// Builds a library from a footprint payload and a model's bytes.
+///
+/// The export path spills the model before building (see
+/// `build_pcblib_from_payload_with_model`), so a batch never holds a model per part;
+/// this entry point is for callers that already have the bytes in hand.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn build_pcblib_from_payload(
     payload: &Value,
     component_name: &str,
     step_bytes: Option<&[u8]>,
 ) -> Result<PcbLibrary> {
+    let step_data = step_bytes.map(|bytes| {
+        // LCEDA does not always author a model with its underside on the board plane, so
+        // the embedded geometry is moved there (see `crate::step_model`).
+        ModelData::spill_copy(crate::step_model::place_step_on_board(bytes).as_ref())
+    });
+    build_pcblib_from_payload_with_model(payload, component_name, step_data)
+}
+
+/// The same library, for a caller that already placed the model and spilled it.
+pub fn build_pcblib_from_payload_with_model(
+    payload: &Value,
+    component_name: &str,
+    step_data: Option<ModelData>,
+) -> Result<PcbLibrary> {
+    let has_step = step_data.is_some();
     let rows = parse_easyeda_rows(payload)?;
     let model_3d = parse_footprint_3d_model(payload).or_else(|| {
-        step_bytes.map(|_| Model3dRaw {
+        has_step.then(|| Model3dRaw {
             title: component_name.to_string(),
             uri: format!("embedded-step:{component_name}"),
             height_mm: None,
@@ -226,10 +248,10 @@ pub fn build_pcblib_from_payload(
                         bounds.update_from_raw_points(&raw_points);
                         let mut points: Vec<CoordPoint> =
                             raw_points.into_iter().map(raw_point_to_coord).collect();
-                        if points.first() != points.last()
-                            && let Some(first) = points.first().copied()
-                        {
-                            points.push(first);
+                        if points.first() != points.last() {
+                            if let Some(first) = points.first().copied() {
+                                points.push(first);
+                            }
                         }
                         overlay_regions.push(RegionRaw { layer_code, points });
                     }
@@ -278,10 +300,10 @@ pub fn build_pcblib_from_payload(
                     bounds.update_from_raw_points(&raw_points);
                     let mut points: Vec<CoordPoint> =
                         raw_points.into_iter().map(raw_point_to_coord).collect();
-                    if points.first() != points.last()
-                        && let Some(first) = points.first().copied()
-                    {
-                        points.push(first);
+                    if points.first() != points.last() {
+                        if let Some(first) = points.first().copied() {
+                            points.push(first);
+                        }
                     }
                     overlay_regions.push(RegionRaw { layer_code, points });
                 }
@@ -633,11 +655,8 @@ pub fn build_pcblib_from_payload(
     let mut library = PcbLibrary::default();
     let body_extents = body_bounds.finish().or_else(|| bounds.finish());
     if let (Some(model), Some(step_data), Some(extents)) =
-        (model_3d.as_ref(), step_bytes, body_extents)
+        (model_3d.as_ref(), step_data, body_extents)
     {
-        // LCEDA does not always author a model with its underside on the board plane, so the
-        // embedded geometry is moved there (see `crate::step_model`).
-        let step_data = crate::step_model::place_step_on_board(step_data);
         let model_id = stable_guid(&format!("{}|{}", component_name, model.uri));
         let model_name = choose_step_model_name(component_name, &model.title);
         component.bodies.push(PcbComponentBody {
@@ -694,7 +713,6 @@ pub fn build_pcblib_from_payload(
     Ok(library)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn push_pad(
     component: &mut PcbComponent,
     pad_raw: &PadRaw,
@@ -906,8 +924,9 @@ fn guess_package_family_height_mm(text: &str) -> Option<f64> {
         || normalized.contains("SSOP")
         || normalized.contains("TSSOP")
         || normalized.contains("MSOP")
-        || normalized.contains("SOT")
     {
+        Some(1.6)
+    } else if normalized.contains("SOT") {
         Some(1.6)
     } else if normalized.contains("DIP") {
         Some(4.0)
@@ -931,15 +950,7 @@ fn choose_step_model_name(component_name: &str, title: &str) -> String {
     } else {
         title.trim()
     };
-    let identity = component_name
-        .rsplit_once("__")
-        .map(|(_, id)| id)
-        .unwrap_or_default();
-    let mut sanitized = if identity.is_empty() {
-        sanitize_filename(base)
-    } else {
-        sanitize_filename(&crate::util::component_identity_name(base, identity))
-    };
+    let mut sanitized = sanitize_filename(base);
     if !sanitized.to_ascii_lowercase().ends_with(".step")
         && !sanitized.to_ascii_lowercase().ends_with(".stp")
     {
@@ -1184,11 +1195,10 @@ fn has_matching_circle_marker(circle: CircleRaw, markers: &[CircleRaw]) -> bool 
 }
 
 fn add_raw_point(points: &mut Vec<RawPoint>, x: f64, y: f64) {
-    if let Some(last) = points.last()
-        && (last.x - x).abs() < 1e-9
-        && (last.y - y).abs() < 1e-9
-    {
-        return;
+    if let Some(last) = points.last() {
+        if (last.x - x).abs() < 1e-9 && (last.y - y).abs() < 1e-9 {
+            return;
+        }
     }
     points.push(RawPoint { x, y });
 }
@@ -1382,25 +1392,26 @@ fn parse_path_raw_points(shape: &Value) -> Vec<RawPoint> {
                 let radius = value_f64(array.get(i + 4)).unwrap_or(0.0);
                 add_axis_aligned_rect_points(&mut points, x, y, width, height, radius);
                 i += 5;
-            } else if (command == "ARC" || command == "A")
-                && i + 2 < array.len()
-                && let (Some(sweep), Some(x), Some(y)) = (
-                    value_f64(array.get(i)),
-                    value_f64(array.get(i + 1)),
-                    value_f64(array.get(i + 2)),
-                )
-            {
-                append_path_arc_points(&mut points, sweep, x, y);
-                i += 3;
+            } else if command == "ARC" || command == "A" {
+                if i + 2 < array.len() {
+                    if let (Some(sweep), Some(x), Some(y)) = (
+                        value_f64(array.get(i)),
+                        value_f64(array.get(i + 1)),
+                        value_f64(array.get(i + 2)),
+                    ) {
+                        append_path_arc_points(&mut points, sweep, x, y);
+                        i += 3;
+                    }
+                }
             }
             continue;
         }
-        if i + 1 < array.len()
-            && let (Some(x), Some(y)) = (value_f64(array.get(i)), value_f64(array.get(i + 1)))
-        {
-            add_raw_point(&mut points, x, y);
-            i += 2;
-            continue;
+        if i + 1 < array.len() {
+            if let (Some(x), Some(y)) = (value_f64(array.get(i)), value_f64(array.get(i + 1))) {
+                add_raw_point(&mut points, x, y);
+                i += 2;
+                continue;
+            }
         }
         i += 1;
     }
@@ -1550,10 +1561,10 @@ fn pad_outline_region(pad: &PadRaw) -> Option<Vec<CoordPoint>> {
     }
     if let Some(points) = &pad.polygon_points {
         let mut outline: Vec<CoordPoint> = points.iter().copied().map(raw_point_to_coord).collect();
-        if outline.first() != outline.last()
-            && let Some(first) = outline.first().copied()
-        {
-            outline.push(first);
+        if outline.first() != outline.last() {
+            if let Some(first) = outline.first().copied() {
+                outline.push(first);
+            }
         }
         return (outline.len() >= 4).then_some(outline);
     }
@@ -1788,25 +1799,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn custom_pad_mask_regions_use_solder_layers() {
-        assert_eq!(
-            mask_region_layers(1, 0.0),
-            vec![(LAYER_TOP_SOLDER, "TOPSOLDER")]
-        );
-        assert_eq!(
-            mask_region_layers(2, 0.0),
-            vec![(LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")]
-        );
-        assert_eq!(
-            mask_region_layers(12, 0.0),
-            vec![
-                (LAYER_TOP_SOLDER, "TOPSOLDER"),
-                (LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")
-            ]
-        );
-    }
-
-    #[test]
     fn builds_pcblib_primitives_from_easyeda_footprint() {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e1",0,"",1,"1",10,20,90,null,["OVAL",30,40],[],0,0,0,1]
@@ -1829,94 +1821,6 @@ mod tests {
         );
         assert_eq!(component.bodies.len(), 1);
         assert_eq!(library.models.len(), 1);
-    }
-
-    #[test]
-    fn skips_body_when_step_model_is_missing() {
-        let payload = json!({"result": {"display_title": "QFN-60_L7.0-W7.0-P0.40-TL-EP3.4", "dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
-["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]
-["POLY","body",0,"",48,2,[-120,120,"L",120,120,120,-120,-120,-120,-120,120],0]"#}});
-        let library = build_pcblib_from_payload(&payload, "RP2350A_C42411118", None).unwrap();
-        let component = &library.components[0];
-        assert_eq!(library.models.len(), 0);
-        assert_eq!(component.bodies.len(), 0);
-    }
-
-    #[test]
-    fn embeds_the_step_model_resting_on_the_board_plane() {
-        // A model centred on Z, like C2904739 (SOP-16) and C9864 (ESOP-8), whose geometry sinks
-        // about 0.8 mm into the board when it is embedded untouched.
-        let mut step = String::from(
-            "ISO-10303-21;\nDATA;\n#900 = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, 1.2 ) ) ;\n",
-        );
-        for index in 0..40 {
-            step.push_str(&format!(
-                "#{index} = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, -0.83 ) ) ;\n"
-            ));
-        }
-        step.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
-        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
-["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
-            "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"192.913,236.22,0,0,0,0,0,0,0"}}});
-
-        let library = build_pcblib_from_payload(&payload, "ESOP-8", Some(step.as_bytes())).unwrap();
-        let embedded = String::from_utf8(library.models[0].step_data.clone()).unwrap();
-
-        assert!(!embedded.contains("-0.83"));
-        assert!(embedded.contains("0.000000000"));
-        assert!(embedded.contains("2.030000000"));
-    }
-
-    #[test]
-    fn embeds_resolved_step_without_payload_model_metadata() {
-        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
-["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#}});
-        let library = build_pcblib_from_payload(
-            &payload,
-            "MODEL_FALLBACK",
-            Some(b"ISO-10303-21;END-ISO-10303-21;"),
-        )
-        .unwrap();
-
-        assert_eq!(library.models.len(), 1);
-        assert_eq!(library.components[0].bodies.len(), 1);
-        assert_eq!(library.models[0].name, "MODEL_FALLBACK.step");
-    }
-
-    #[test]
-    fn builds_rotated_rectangular_outline_regions() {
-        let outline = rectangular_pad_outline(-57.09, 19.38, 11.811, 39.37, 90.0).unwrap();
-        assert_eq!(outline.len(), 5);
-        assert_eq!(outline.first(), outline.last());
-    }
-
-    #[test]
-    fn exports_poly_pad_as_hotspot_with_shape_regions() {
-        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
-["PAD","e1",0,"",1,"20",-39.37,61.39,0,null,["POLY",[-45.315,76.467,"L",-45.315,51.985,-37.945,44.948,-33.474,44.863,-33.419,76.471,-45.315,76.467]],[],0.003,-0.003,90,1,0,1.9689999999999999,1.9689999999999999,0,0,0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "UFQFPN-20_L3.0-W3.0-P0.50-TL", None).unwrap();
-        let component = &library.components[0];
-        assert_eq!(component.pads.len(), 1);
-        assert_eq!(component.pads[0].shape_top, PAD_SHAPE_ROUND);
-        assert_eq!(component.regions.len(), 3);
-        assert!(
-            component
-                .regions
-                .iter()
-                .any(|region| region.layer == LAYER_MECHANICAL_9 && region.outline.len() == 6)
-        );
-        assert!(
-            component
-                .regions
-                .iter()
-                .any(|region| region.layer == LAYER_TOP)
-        );
-        assert_eq!(component.extended_primitive_information.len(), 1);
-        assert_eq!(
-            component.extended_primitive_information[0].primitive_index,
-            component.pads.len() + component.tracks.len() + component.arcs.len() + 1
-        );
     }
 
     #[test]
@@ -2022,6 +1926,114 @@ mod tests {
                     .any(|mask| mask.outline == region.outline)
             );
         }
+    }
+
+    #[test]
+    fn custom_pad_mask_regions_use_solder_layers() {
+        assert_eq!(
+            mask_region_layers(1, 0.0),
+            vec![(LAYER_TOP_SOLDER, "TOPSOLDER")]
+        );
+        assert_eq!(
+            mask_region_layers(2, 0.0),
+            vec![(LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")]
+        );
+        assert_eq!(
+            mask_region_layers(12, 0.0),
+            vec![
+                (LAYER_TOP_SOLDER, "TOPSOLDER"),
+                (LAYER_BOTTOM_SOLDER, "BOTTOMSOLDER")
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_body_when_step_model_is_missing() {
+        let payload = json!({"result": {"display_title": "QFN-60_L7.0-W7.0-P0.40-TL-EP3.4", "dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]
+["POLY","body",0,"",48,2,[-120,120,"L",120,120,120,-120,-120,-120,-120,120],0]"#}});
+        let library = build_pcblib_from_payload(&payload, "RP2350A_C42411118", None).unwrap();
+        let component = &library.components[0];
+        assert_eq!(library.models.len(), 0);
+        assert_eq!(component.bodies.len(), 0);
+    }
+
+    #[test]
+    fn embeds_the_step_model_resting_on_the_board_plane() {
+        // A model centred on Z, like C2904739 (SOP-16) and C9864 (ESOP-8), whose geometry sinks
+        // about 0.8 mm into the board when it is embedded untouched.
+        let mut step = String::from(
+            "ISO-10303-21;\nDATA;\n#900 = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, 1.2 ) ) ;\n",
+        );
+        for index in 0..40 {
+            step.push_str(&format!(
+                "#{index} = CARTESIAN_POINT ( 'NONE',  ( 0.0, 0.0, -0.83 ) ) ;\n"
+            ));
+        }
+        step.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
+            "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"192.913,236.22,0,0,0,0,0,0,0"}}});
+
+        let library = build_pcblib_from_payload(&payload, "ESOP-8", Some(step.as_bytes())).unwrap();
+        let embedded = library.models[0].step_data.read().unwrap().into_owned();
+        let embedded = String::from_utf8(embedded).unwrap();
+
+        assert!(!embedded.contains("-0.83"));
+        assert!(embedded.contains("0.000000000"));
+        assert!(embedded.contains("2.030000000"));
+    }
+
+    #[test]
+    fn embeds_resolved_step_without_payload_model_metadata() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#}});
+        let library = build_pcblib_from_payload(
+            &payload,
+            "MODEL_FALLBACK",
+            Some(b"ISO-10303-21;END-ISO-10303-21;"),
+        )
+        .unwrap();
+
+        assert_eq!(library.models.len(), 1);
+        assert_eq!(library.components[0].bodies.len(), 1);
+        assert_eq!(library.models[0].name, "MODEL_FALLBACK.step");
+    }
+
+    #[test]
+    fn builds_rotated_rectangular_outline_regions() {
+        let outline = rectangular_pad_outline(-57.09, 19.38, 11.811, 39.37, 90.0).unwrap();
+        assert_eq!(outline.len(), 5);
+        assert_eq!(outline.first(), outline.last());
+    }
+
+    #[test]
+    fn exports_poly_pad_as_hotspot_with_shape_regions() {
+        let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
+["PAD","e1",0,"",1,"20",-39.37,61.39,0,null,["POLY",[-45.315,76.467,"L",-45.315,51.985,-37.945,44.948,-33.474,44.863,-33.419,76.471,-45.315,76.467]],[],0.003,-0.003,90,1,0,1.9689999999999999,1.9689999999999999,0,0,0]"#}});
+        let library =
+            build_pcblib_from_payload(&payload, "UFQFPN-20_L3.0-W3.0-P0.50-TL", None).unwrap();
+        let component = &library.components[0];
+        assert_eq!(component.pads.len(), 1);
+        assert_eq!(component.pads[0].shape_top, PAD_SHAPE_ROUND);
+        assert_eq!(component.regions.len(), 3);
+        assert!(
+            component
+                .regions
+                .iter()
+                .any(|region| region.layer == LAYER_MECHANICAL_9 && region.outline.len() == 6)
+        );
+        assert!(
+            component
+                .regions
+                .iter()
+                .any(|region| region.layer == LAYER_TOP)
+        );
+        assert_eq!(component.extended_primitive_information.len(), 1);
+        assert_eq!(
+            component.extended_primitive_information[0].primitive_index,
+            component.pads.len() + component.tracks.len() + component.arcs.len() + 1
+        );
     }
 
     #[test]

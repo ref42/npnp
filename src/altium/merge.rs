@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cfb::CompoundFile;
 use encoding_rs::WINDOWS_1252;
 
-use super::pcblib::{PcbLibrary, write_pcblib};
+use super::pcblib::{ModelData, PcbLibrary, write_pcblib};
 use super::schlib::Component;
 use crate::error::{AppError, Result};
 
@@ -35,13 +35,13 @@ pub(crate) struct PcblibComponentRecord {
     pub(crate) unique_id_primitive_information: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct PcblibModelRecord {
     pub(crate) entry: Vec<u8>,
-    pub(crate) stream: Vec<u8>,
+    pub(crate) stream: ModelData,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct PcblibRecordLibrary {
     pub(crate) components: Vec<PcblibComponentRecord>,
     pub(crate) models: Vec<PcblibModelRecord>,
@@ -55,7 +55,7 @@ pub(crate) fn schlib_record_from_component(component: &Component) -> Result<Schl
 }
 
 pub(crate) fn pcblib_records_from_library(library: &PcbLibrary) -> Result<PcblibRecordLibrary> {
-    let path = temp_path("npnp_pcblib_record", "PcbLib");
+    let path = temp_path("export_pcblib_record", "PcbLib");
     let result = (|| {
         write_pcblib(library, &path)?;
         read_pcblib_records(&path)
@@ -118,7 +118,7 @@ pub(crate) fn write_schlib_records(records: &[SchlibRecord], output_path: &Path)
         )?;
     }
     for (record, section_key) in records.iter().zip(sections.iter()) {
-        compound.create_storage(format!("/{section_key}/"))?;
+        compound.create_storage(&format!("/{section_key}/"))?;
         write_stream(&mut compound, &format!("/{section_key}/Data"), &record.data)?;
     }
     write_stream(&mut compound, "/Storage", &schlib_storage_bytes())?;
@@ -232,11 +232,9 @@ pub(crate) fn write_pcblib_records(
         &pcblib_models_data_bytes(&library.models),
     )?;
     for (index, model) in library.models.iter().enumerate() {
-        write_stream(
-            &mut compound,
-            &format!("/Library/Models/{index}"),
-            &model.stream,
-        )?;
+        let path = format!("/Library/Models/{index}");
+        let mut stream = compound.create_stream(&path)?;
+        model.stream.copy_to(&mut stream)?;
     }
 
     compound.create_storage("/Library/Textures/")?;
@@ -256,7 +254,7 @@ pub(crate) fn write_pcblib_records(
     write_stream(&mut compound, "/Library/ModelsNoEmbed/Data", &[])?;
 
     for (component, section_key) in library.components.iter().zip(sections.iter()) {
-        compound.create_storage(format!("/{section_key}/"))?;
+        compound.create_storage(&format!("/{section_key}/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/Header"),
@@ -282,7 +280,7 @@ pub(crate) fn write_pcblib_records(
                 .extended_primitive_information_header
                 .clone()
                 .unwrap_or_else(|| storage_header_bytes(0));
-            compound.create_storage(format!("/{section_key}/ExtendedPrimitiveInformation/"))?;
+            compound.create_storage(&format!("/{section_key}/ExtendedPrimitiveInformation/"))?;
             write_stream(
                 &mut compound,
                 &format!("/{section_key}/ExtendedPrimitiveInformation/Header"),
@@ -294,7 +292,7 @@ pub(crate) fn write_pcblib_records(
                 extended_primitive_information,
             )?;
         }
-        compound.create_storage(format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
+        compound.create_storage(&format!("/{section_key}/UniqueIdPrimitiveInformation/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/UniqueIdPrimitiveInformation/Header"),
@@ -313,9 +311,12 @@ pub(crate) fn write_pcblib_records(
 
 pub(crate) fn normalize_lcsc_id(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    let digits = trimmed
+    let Some(digits) = trimmed
         .strip_prefix('C')
-        .or_else(|| trimmed.strip_prefix('c'))?;
+        .or_else(|| trimmed.strip_prefix('c'))
+    else {
+        return None;
+    };
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -469,7 +470,11 @@ fn read_pcblib_model_entries(
         }
         let entry = data[offset..offset + len].to_vec();
         offset += len;
-        let stream = read_stream_bytes(compound, &format!("/Library/Models/{index}"))?;
+        // Copied straight out of the library: an appended library's models are as
+        // bulky as a fresh one's, and they are only needed again when the merged file
+        // is written (see `ModelData`).
+        let mut stream = compound.open_stream(&format!("/Library/Models/{index}"))?;
+        let stream = ModelData::from_reader(&mut stream)?;
         records.push(PcblibModelRecord { entry, stream });
     }
     Ok(records)
@@ -505,10 +510,47 @@ fn resolve_section_key(
     let candidates = section_key_candidates(name, explicit, derived);
     for section_key in &candidates {
         if compound
-            .open_stream(format!("/{section_key}/{required_stream}"))
+            .open_stream(&format!("/{section_key}/{required_stream}"))
             .is_ok()
         {
             return Ok(section_key.clone());
+        }
+    }
+
+    // A library written by an older build can key a section on a name none of the
+    // candidates spell exactly — an older rule, a uniqueness suffix, or a name whose
+    // bytes are in the system code page rather than Windows-1252 — so fall back to
+    // the storage whose name matches a candidate once those differences are levelled
+    // out. Without this, appending to such a library fails before it starts.
+    let wanted: Vec<String> = candidates
+        .iter()
+        .map(|key| normalize_section_key(key))
+        .collect();
+    let mut stored: Vec<String> = Vec::new();
+    if let Ok(entries) = compound.walk_storage("/") {
+        for entry in entries {
+            let entry_name = entry.name().to_string();
+            if !entry_name.is_empty() && !stored.contains(&entry_name) {
+                stored.push(entry_name);
+            }
+        }
+    }
+    for entry_name in stored {
+        let normalized = normalize_section_key(&entry_name);
+        let matches_candidate = wanted.iter().any(|key| {
+            normalized == *key
+                || normalized
+                    .strip_prefix(key.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('_'))
+        });
+        if !matches_candidate {
+            continue;
+        }
+        if compound
+            .open_stream(&format!("/{entry_name}/{required_stream}"))
+            .is_ok()
+        {
+            return Ok(entry_name);
         }
     }
 
@@ -520,6 +562,27 @@ fn resolve_section_key(
     Err(AppError::Other(format!(
         "component {name:?} has no {required_stream} stream; tried {tried}"
     )))
+}
+
+/// Section keys differ in case and in which characters they keep, so compare them
+/// with the case folded and the file-name characters levelled out.
+fn normalize_section_key(key: &str) -> String {
+    key.trim()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn first_param_block_pairs(data: &[u8], label: &str) -> Result<Vec<(String, String)>> {
@@ -663,8 +726,9 @@ fn collect_section_key_pairs<'a>(
 ) -> Vec<(String, String)> {
     names
         .zip(sections.iter())
-        .filter(|&(name, section_key)| section_key.as_str() != name)
-        .map(|(name, section_key)| (name.to_string(), section_key.clone()))
+        .filter_map(|(name, section_key)| {
+            (section_key.as_str() != name).then(|| (name.to_string(), section_key.clone()))
+        })
         .collect()
 }
 
@@ -712,14 +776,49 @@ fn legacy_section_key_from_name(name: &str) -> String {
         .collect()
 }
 
+/// A section key derived the way the library turns a name into a file name: only the
+/// characters a file name cannot hold are replaced, so spaces and non-ASCII letters
+/// stay. Older exports keyed their sections this way (`AF 90?WJDG` is stored as
+/// `AF 90_WJDG`), so reading an existing library has to try it.
+fn file_section_key_from_name(name: &str) -> String {
+    if name.is_empty() {
+        return "_".to_string();
+    }
+    name.chars()
+        .take(31)
+        .map(|character| {
+            if character.is_ascii_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 fn section_key_candidates(name: &str, explicit: Option<&str>, derived: &str) -> Vec<String> {
     let mut candidates = Vec::new();
     if let Some(explicit) = explicit.filter(|value| !value.trim().is_empty()) {
         push_unique_section_key(&mut candidates, explicit.to_string());
     }
     push_unique_section_key(&mut candidates, derived.to_string());
+    push_unique_section_key(&mut candidates, file_section_key_from_name(name));
     push_unique_section_key(&mut candidates, legacy_section_key_from_name(name));
     push_unique_section_key(&mut candidates, name.to_string());
+
+    // A name from an older library is stored in the system code page, so it arrives as
+    // mojibake (`IC座-40P` reads back as `IC×ù-40P`). The repaired spelling is only
+    // ever used when it matches a section the library actually holds.
+    let repaired = crate::util::repair_misdecoded_gbk_text(name);
+    if repaired != name {
+        push_unique_section_key(&mut candidates, file_section_key_from_name(&repaired));
+        push_unique_section_key(&mut candidates, repaired);
+    }
     candidates
 }
 
@@ -1070,8 +1169,9 @@ fn encode_utf8_parameter_value(text: &str) -> String {
 mod tests {
     use super::{
         normalize_lcsc_id, pcblib_records_from_library, read_pcblib_records, read_schlib_records,
-        schlib_file_header_bytes, schlib_record_from_component, schlib_storage_bytes, temp_path,
-        write_pcblib_records, write_schlib_records, write_stream,
+        schlib_file_header_bytes, schlib_record_from_component, schlib_storage_bytes,
+        section_key_candidates, temp_path, write_pcblib_records, write_schlib_records,
+        write_stream,
     };
     use crate::altium::footprint::build_pcblib_from_payload;
     use crate::altium::schlib::{
@@ -1087,6 +1187,29 @@ mod tests {
     fn normalizes_lcsc_ids_case_insensitively() {
         assert_eq!(normalize_lcsc_id(" c2040 ").as_deref(), Some("C2040"));
         assert!(normalize_lcsc_id("RP2040").is_none());
+    }
+
+    #[test]
+    fn section_keys_cover_the_names_older_libraries_used() {
+        // A library written by an older build keys this on the file-name rule.
+        let candidates = section_key_candidates("AF 90?WJDG", None, "AF_90_WJDG");
+        assert!(
+            candidates.iter().any(|key| key == "AF 90_WJDG"),
+            "the file-name spelling has to be tried: {candidates:?}"
+        );
+        // This one has no illegal characters, so the name itself is the key.
+        let candidates = section_key_candidates("IC座-40P", None, "IC_-40P");
+        assert!(
+            candidates.iter().any(|key| key == "IC座-40P"),
+            "a name without illegal characters is its own key: {candidates:?}"
+        );
+        // A name written in the system code page arrives as mojibake, and the repaired
+        // spelling has to be among the keys that get tried.
+        let candidates = section_key_candidates("IC×ù-40P", None, "IC__-40P");
+        assert!(
+            candidates.iter().any(|key| key == "IC座-40P"),
+            "the repaired spelling has to be tried: {candidates:?}"
+        );
     }
 
     #[test]
@@ -1117,7 +1240,7 @@ mod tests {
         assert_eq!(record_a.identity.as_deref(), Some("C2040"));
         assert_eq!(record_b.identity.as_deref(), Some("C42"));
 
-        let path = temp_path("npnp_merge_schlib_roundtrip", "SchLib");
+        let path = temp_path("export_merge_schlib_roundtrip", "SchLib");
         write_schlib_records(&[record_a, record_b], &path).expect("write merged SchLib");
         let records = read_schlib_records(&path).expect("read merged SchLib");
         assert_eq!(records.len(), 2);
@@ -1169,7 +1292,7 @@ mod tests {
         let ascii_record =
             schlib_record_from_component(&ascii_component).expect("capture ASCII SchLib record");
 
-        let path = temp_path("npnp_merge_schlib_non_ascii", "SchLib");
+        let path = temp_path("export_merge_schlib_non_ascii", "SchLib");
         write_schlib_records(&[ascii_record, record], &path).expect("write merged SchLib");
         let records = read_schlib_records(&path).expect("read merged SchLib");
         assert_eq!(records.len(), 2);
@@ -1201,7 +1324,7 @@ mod tests {
             .expect("build component");
         let record = schlib_record_from_component(&component).expect("capture SchLib record");
 
-        let path = temp_path("npnp_merge_schlib_legacy_space", "SchLib");
+        let path = temp_path("export_merge_schlib_legacy_space", "SchLib");
         let file = File::create(&path).expect("create legacy SchLib");
         let mut compound = cfb::CompoundFile::create(file).expect("create compound");
         write_stream(
@@ -1211,7 +1334,7 @@ mod tests {
         )
         .expect("write header");
         compound
-            .create_storage(format!("/{name}/"))
+            .create_storage(&format!("/{name}/"))
             .expect("create legacy storage");
         write_stream(&mut compound, &format!("/{name}/Data"), &record.data).expect("write data");
         write_stream(&mut compound, "/Storage", &schlib_storage_bytes()).expect("write storage");
@@ -1237,13 +1360,26 @@ mod tests {
         assert_eq!(records.components.len(), 1);
         assert_eq!(records.models.len(), 1);
 
-        let path = temp_path("npnp_merge_pcblib_roundtrip", "PcbLib");
+        let path = temp_path("export_merge_pcblib_roundtrip", "PcbLib");
         write_pcblib_records(&records, &path).expect("write merged PcbLib");
         let round_trip = read_pcblib_records(&path).expect("read merged PcbLib");
         assert_eq!(round_trip.components.len(), 1);
         assert_eq!(round_trip.components[0].name, "ROUNDTRIP_FOOTPRINT");
         assert_eq!(round_trip.models.len(), 1);
         fs::remove_file(path).ok();
+
+        // Appending reads an existing library's models back and writes them out
+        // again, so a model stream has to survive that round trip byte for byte.
+        let again = build_pcblib_from_payload(&payload, "ROUNDTRIP_FOOTPRINT", Some(STEP_FIXTURE))
+            .expect("build footprint library again");
+        let again = pcblib_records_from_library(&again).expect("capture PcbLib records again");
+        let expected = again.models[0].stream.read().expect("read captured model");
+        let actual = round_trip.models[0]
+            .stream
+            .read()
+            .expect("read round tripped model");
+        assert!(!expected.is_empty());
+        assert_eq!(actual, expected, "an appended model must keep its stream");
     }
 
     #[test]

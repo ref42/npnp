@@ -621,6 +621,45 @@ async fn export_batch_merged_append(
     Ok(summary)
 }
 
+/// Writes into a merged library that npnp itself produced.
+///
+/// A library the user has marked read-only (or that a copy left read-only)
+/// cannot be overwritten as it is, and an append into it would otherwise fail
+/// with a bare "access is denied" that says nothing about which file is at fault.
+fn make_writable(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(());
+    };
+    let permissions = metadata.permissions();
+    if !permissions.readonly() {
+        return Ok(());
+    }
+    fs::set_permissions(path, writable(permissions)).map_err(|err| {
+        AppError::Other(format!(
+            "the existing library {} is read-only and cannot be updated: {err}",
+            path.display()
+        ))
+    })
+}
+
+/// The same permissions, with permission to write the file.
+///
+/// `set_readonly(false)` is only the right call on Windows. On Unix it clears
+/// every write bit at once, which leaves the library world writable, so the
+/// owner's bit is set instead and the rest of the mode is left alone.
+#[cfg(unix)]
+fn writable(permissions: fs::Permissions) -> fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+    fs::Permissions::from_mode(permissions.mode() | 0o200)
+}
+
+#[cfg(not(unix))]
+#[allow(clippy::permissions_set_readonly_false)] // the correct call on Windows
+fn writable(mut permissions: fs::Permissions) -> fs::Permissions {
+    permissions.set_readonly(false);
+    permissions
+}
+
 fn write_merged_outputs(
     targets: ExportTargets,
     schlib_records: &[SchlibRecord],
@@ -635,6 +674,7 @@ fn write_merged_outputs(
                 "cannot write merged SchLib without any components".to_string(),
             ));
         }
+        make_writable(schlib_path)?;
         write_schlib_records(schlib_records, schlib_path)?;
         summary.generated_files.push(schlib_path.to_path_buf());
     }
@@ -644,6 +684,7 @@ fn write_merged_outputs(
                 "cannot write merged PcbLib without any components".to_string(),
             ));
         }
+        make_writable(pcblib_path)?;
         write_pcblib_records(pcblib_library, pcblib_path)?;
         summary.generated_files.push(pcblib_path.to_path_buf());
     }
@@ -1154,6 +1195,9 @@ async fn export_component(
             &schlib_dir,
             options.force,
             options.english_metadata,
+            // The same stroke and fill the plain `export_schlib` uses.
+            0x68380B,
+            0xE0FFFF,
         )
         .await?;
     }

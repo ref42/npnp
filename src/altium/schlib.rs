@@ -13,6 +13,10 @@ use crate::error::Result;
 use crate::util::nested_string;
 
 const WHITE_BGR: i32 = 0xFFFFFF;
+/// The fill colour that means "no colour at all": the symbol keeps its outline
+/// and the body comes out transparent, whatever colour the source shape asked
+/// for.
+pub const NO_FILL_BGR: i32 = -1;
 const BODY_LINE_WIDTH_INDEX: i32 = 1;
 const GRAPHIC_LINE_WIDTH_INDEX: i32 = 1;
 const PIN_LENGTH_UNITS: f64 = 20.0;
@@ -66,14 +70,37 @@ pub fn build_component_from_payload_with_metadata(
     component_name: &str,
     metadata: &SchlibMetadata,
 ) -> Result<Component> {
-    build_component(payload, component_name, metadata)
+    build_component(
+        payload,
+        component_name,
+        metadata,
+        common::SYMBOL_BGR,
+        common::FILL_BGR,
+    )
+}
+
+pub fn build_component_from_payload_with_metadata_and_color(
+    payload: &Value,
+    component_name: &str,
+    metadata: &SchlibMetadata,
+    color_bgr: i32,
+    fill_color_bgr: i32,
+) -> Result<Component> {
+    build_component(payload, component_name, metadata, color_bgr, fill_color_bgr)
 }
 
 fn build_component(
     payload: &Value,
     component_name: &str,
     metadata: &SchlibMetadata,
+    color_bgr: i32,
+    fill_color_bgr: i32,
 ) -> Result<Component> {
+    // A caller can ask for no fill colour at all. That sentinel wins over
+    // whatever fill the source shapes carried: they keep their outlines and
+    // their areas come out transparent.
+    let no_fill = fill_color_bgr == NO_FILL_BGR;
+    let fill_color_bgr = if no_fill { WHITE_BGR } else { fill_color_bgr };
     let rows = common::parse_easyeda_rows(payload)?;
     let mut parts: Vec<PartRaw> = Vec::new();
     let mut current_part_index = None;
@@ -393,10 +420,10 @@ fn build_component(
                     laid_out_rect.x2_units,
                     laid_out_rect.height_units() - laid_out_rect.y2_units,
                 ),
-                color_bgr: common::BORDER_BGR,
-                fill_color_bgr: common::FILL_BGR,
-                is_filled: true,
-                is_transparent: false,
+                color_bgr,
+                fill_color_bgr,
+                is_filled: !no_fill,
+                is_transparent: no_fill,
                 line_width_index: BODY_LINE_WIDTH_INDEX,
                 owner_part_id: 1,
             });
@@ -413,7 +440,7 @@ fn build_component(
                     orientation: pin_orientation_from_easyeda_rotation(pin.rotation_degrees),
                     show_name: pin.show_name,
                     show_designator: pin.show_designator,
-                    color_bgr: common::SYMBOL_BGR,
+                    color_bgr,
                     owner_part_id: 1,
                     owner_part_display_mode: 0,
                 });
@@ -431,36 +458,35 @@ fn build_component(
                 component.rectangles.push(Rectangle {
                     corner1: common::CoordPoint::from_symbol_units(rect.x1_units, rect.y1_units),
                     corner2: common::CoordPoint::from_symbol_units(rect.x2_units, rect.y2_units),
-                    color_bgr: common::BORDER_BGR,
-                    fill_color_bgr: if complex { WHITE_BGR } else { common::FILL_BGR },
-                    is_filled: !complex,
-                    is_transparent: complex,
+                    color_bgr,
+                    fill_color_bgr: if complex { WHITE_BGR } else { fill_color_bgr },
+                    is_filled: !complex && !no_fill,
+                    is_transparent: complex || no_fill,
                     line_width_index: BODY_LINE_WIDTH_INDEX,
                     owner_part_id: rect.owner_part_id,
                 });
                 has_any_body = true;
             }
-        } else if let Some(bounds) = part.bounds.finish()
-            && !part.pins.is_empty()
-            && !part.has_graphics()
-        {
-            component.rectangles.push(Rectangle {
-                corner1: common::CoordPoint::from_symbol_units(
-                    bounds.min_x_units,
-                    bounds.max_y_units,
-                ),
-                corner2: common::CoordPoint::from_symbol_units(
-                    bounds.max_x_units,
-                    bounds.min_y_units,
-                ),
-                color_bgr: common::BORDER_BGR,
-                fill_color_bgr: if complex { WHITE_BGR } else { common::FILL_BGR },
-                is_filled: !complex,
-                is_transparent: complex,
-                line_width_index: BODY_LINE_WIDTH_INDEX,
-                owner_part_id: part.owner_part_id,
-            });
-            has_any_body = true;
+        } else if let Some(bounds) = part.bounds.finish() {
+            if !part.pins.is_empty() && !part.has_graphics() {
+                component.rectangles.push(Rectangle {
+                    corner1: common::CoordPoint::from_symbol_units(
+                        bounds.min_x_units,
+                        bounds.max_y_units,
+                    ),
+                    corner2: common::CoordPoint::from_symbol_units(
+                        bounds.max_x_units,
+                        bounds.min_y_units,
+                    ),
+                    color_bgr,
+                    fill_color_bgr: if complex { WHITE_BGR } else { fill_color_bgr },
+                    is_filled: !complex && !no_fill,
+                    is_transparent: complex || no_fill,
+                    line_width_index: BODY_LINE_WIDTH_INDEX,
+                    owner_part_id: part.owner_part_id,
+                });
+                has_any_body = true;
+            }
         }
         for polyline in &part.polylines {
             component.polylines.push(Polyline {
@@ -471,7 +497,7 @@ fn build_component(
                         common::CoordPoint::from_symbol_units(point.x_units, point.y_units)
                     })
                     .collect(),
-                color_bgr: common::SYMBOL_BGR,
+                color_bgr,
                 line_width_index: GRAPHIC_LINE_WIDTH_INDEX,
                 owner_part_id: polyline.owner_part_id,
             });
@@ -487,7 +513,7 @@ fn build_component(
                         common::CoordPoint::from_symbol_units(arc.mid.x_units, arc.mid.y_units),
                         common::CoordPoint::from_symbol_units(arc.end.x_units, arc.end.y_units),
                     ],
-                    color_bgr: common::SYMBOL_BGR,
+                    color_bgr,
                     line_width_index: GRAPHIC_LINE_WIDTH_INDEX,
                     owner_part_id: arc.owner_part_id,
                 });
@@ -502,14 +528,14 @@ fn build_component(
                 ),
                 radius_x_raw: common::raw_from_symbol_units(ellipse.radius_x_units),
                 radius_y_raw: common::raw_from_symbol_units(ellipse.radius_y_units),
-                color_bgr: common::SYMBOL_BGR,
-                fill_color_bgr: if ellipse.is_filled {
-                    common::SYMBOL_BGR
+                color_bgr,
+                fill_color_bgr: if ellipse.is_filled && !no_fill {
+                    fill_color_bgr
                 } else {
                     WHITE_BGR
                 },
-                is_filled: ellipse.is_filled,
-                is_transparent: ellipse.is_transparent,
+                is_filled: ellipse.is_filled && !no_fill,
+                is_transparent: ellipse.is_transparent || no_fill,
                 line_width_index: GRAPHIC_LINE_WIDTH_INDEX,
                 owner_part_id: ellipse.owner_part_id,
             });
@@ -520,7 +546,7 @@ fn build_component(
                 text: label.text.clone(),
                 location: common::CoordPoint::from_symbol_units(label.x_units, label.y_units),
                 orientation: text_orientation_from_rotation(label.rotation_degrees),
-                color_bgr: common::SYMBOL_BGR,
+                color_bgr,
                 owner_part_id: label.owner_part_id,
             });
             has_any_body = true;
@@ -566,24 +592,32 @@ fn build_component(
                 orientation: pin_geometry.orientation,
                 show_name,
                 show_designator,
-                color_bgr: common::SYMBOL_BGR,
+                color_bgr,
                 owner_part_id: pin.owner_part_id,
                 owner_part_display_mode: 0,
             });
         }
     }
 
-    if !has_any_body && let Some(bounds) = global_bounds.finish() {
-        component.rectangles.push(Rectangle {
-            corner1: common::CoordPoint::from_symbol_units(bounds.min_x_units, bounds.max_y_units),
-            corner2: common::CoordPoint::from_symbol_units(bounds.max_x_units, bounds.min_y_units),
-            color_bgr: common::BORDER_BGR,
-            fill_color_bgr: WHITE_BGR,
-            is_filled: false,
-            is_transparent: true,
-            line_width_index: BODY_LINE_WIDTH_INDEX,
-            owner_part_id: 1,
-        });
+    if !has_any_body {
+        if let Some(bounds) = global_bounds.finish() {
+            component.rectangles.push(Rectangle {
+                corner1: common::CoordPoint::from_symbol_units(
+                    bounds.min_x_units,
+                    bounds.max_y_units,
+                ),
+                corner2: common::CoordPoint::from_symbol_units(
+                    bounds.max_x_units,
+                    bounds.min_y_units,
+                ),
+                color_bgr,
+                fill_color_bgr: WHITE_BGR,
+                is_filled: false,
+                is_transparent: true,
+                line_width_index: BODY_LINE_WIDTH_INDEX,
+                owner_part_id: 1,
+            });
+        }
     }
 
     add_metadata_implementation(&mut component, metadata);
@@ -675,11 +709,11 @@ fn parse_path_array_points(values: &[Value]) -> Vec<PointUnits> {
                 index += 1;
                 match cmd.as_str() {
                     "Z" | "CLOSE" => {
-                        if let (Some(first), Some(last)) = (start, current)
-                            && !same_point(first, last)
-                        {
-                            add_path_point(&mut points, first.x_units, first.y_units);
-                            current = Some(first);
+                        if let (Some(first), Some(last)) = (start, current) {
+                            if !same_point(first, last) {
+                                add_path_point(&mut points, first.x_units, first.y_units);
+                                current = Some(first);
+                            }
                         }
                     }
                     "M" | "L" => {
@@ -737,43 +771,43 @@ fn parse_path_array_points(values: &[Value]) -> Vec<PointUnits> {
                         }
                     }
                     "ARC" | "A" => {
-                        if index + 2 < values.len()
-                            && let (Some(x), Some(y)) = (
+                        if index + 2 < values.len() {
+                            if let (Some(x), Some(y)) = (
                                 values.get(index + 1).and_then(common::value_as_f64),
                                 values.get(index + 2).and_then(common::value_as_f64),
-                            )
-                        {
-                            add_path_point(&mut points, x, y);
-                            current = Some(PointUnits {
-                                x_units: x,
-                                y_units: y,
-                            });
-                            if start.is_none() {
-                                start = current;
+                            ) {
+                                add_path_point(&mut points, x, y);
+                                current = Some(PointUnits {
+                                    x_units: x,
+                                    y_units: y,
+                                });
+                                if start.is_none() {
+                                    start = current;
+                                }
+                                index += 3;
                             }
-                            index += 3;
                         }
                     }
                     _ => {}
                 }
             }
             _ => {
-                if index + 1 < values.len()
-                    && let (Some(x), Some(y)) = (
+                if index + 1 < values.len() {
+                    if let (Some(x), Some(y)) = (
                         values.get(index).and_then(common::value_as_f64),
                         values.get(index + 1).and_then(common::value_as_f64),
-                    )
-                {
-                    add_path_point(&mut points, x, y);
-                    current = Some(PointUnits {
-                        x_units: x,
-                        y_units: y,
-                    });
-                    if start.is_none() {
-                        start = current;
+                    ) {
+                        add_path_point(&mut points, x, y);
+                        current = Some(PointUnits {
+                            x_units: x,
+                            y_units: y,
+                        });
+                        if start.is_none() {
+                            start = current;
+                        }
+                        index += 2;
+                        continue;
                     }
-                    index += 2;
-                    continue;
                 }
                 index += 1;
             }
@@ -800,11 +834,11 @@ fn parse_svg_path_points(text: &str) -> Vec<PointUnits> {
             command = letter;
             index += 1;
             if matches!(command, 'Z' | 'z') {
-                if let Some(first) = start
-                    && !same_point(first, current)
-                {
-                    add_path_point(&mut points, first.x_units, first.y_units);
-                    current = first;
+                if let Some(first) = start {
+                    if !same_point(first, current) {
+                        add_path_point(&mut points, first.x_units, first.y_units);
+                        current = first;
+                    }
                 }
                 continue;
             }
@@ -997,21 +1031,19 @@ fn tokenize_svg_path(text: &str) -> Vec<String> {
             }
             continue;
         }
-        if (ch == '-' || ch == '+')
-            && !current.is_empty()
-            && current != "e"
-            && current != "E"
-            && !current.trim().is_empty()
-        {
-            tokens.push(current.trim().to_string());
-            current.clear();
+        if (ch == '-' || ch == '+') && !current.is_empty() && current != "e" && current != "E" {
+            if !current.trim().is_empty() {
+                tokens.push(current.trim().to_string());
+                current.clear();
+            }
         }
         current.push(ch);
         if matches!(chars.peek(), Some(next) if next.is_ascii_alphabetic() || *next == ',' || next.is_whitespace())
-            && !current.trim().is_empty()
         {
-            tokens.push(current.trim().to_string());
-            current.clear();
+            if !current.trim().is_empty() {
+                tokens.push(current.trim().to_string());
+                current.clear();
+            }
         }
     }
     if !current.trim().is_empty() {
@@ -1060,7 +1092,7 @@ pub fn write_schlib_library(components: &[Component], output_path: &Path) -> Res
         )?;
     }
     for (component, section_key) in &sections {
-        compound.create_storage(format!("/{section_key}/"))?;
+        compound.create_storage(&format!("/{section_key}/"))?;
         write_stream(
             &mut compound,
             &format!("/{section_key}/Data"),
@@ -1082,7 +1114,7 @@ impl Component {
     }
 }
 
-fn collect_sections(components: &[Component]) -> Vec<(&Component, String)> {
+fn collect_sections<'a>(components: &'a [Component]) -> Vec<(&'a Component, String)> {
     let mut used = HashSet::new();
     components
         .iter()
@@ -1096,8 +1128,10 @@ fn collect_sections(components: &[Component]) -> Vec<(&Component, String)> {
 fn collect_section_key_pairs(sections: &[(&Component, String)]) -> Vec<(String, String)> {
     sections
         .iter()
-        .filter(|&(component, section_key)| section_key.as_str() != component.name.as_str())
-        .map(|(component, section_key)| (component.name.clone(), section_key.clone()))
+        .filter_map(|(component, section_key)| {
+            (section_key.as_str() != component.name.as_str())
+                .then(|| (component.name.clone(), section_key.clone()))
+        })
         .collect()
 }
 
@@ -1139,7 +1173,7 @@ fn file_header_bytes(components: &[Component]) -> Vec<u8> {
     params.push("WEIGHT", schlib_weight(components).to_string());
     params.push("MINORVERSION", "2");
     params.push("FONTIDCOUNT", "1");
-    params.push("SIZE1", "10");
+    params.push("SIZE1", "4");
     params.push("FONTNAME1", "Times New Roman");
     params.push("USEMBCS", "T");
     params.push("ISBOC", "T");
@@ -2064,7 +2098,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("npnp_schlib_meta_{timestamp}.SchLib"));
+        let path = std::env::temp_dir().join(format!("export_schlib_meta_{timestamp}.SchLib"));
         let metadata = SchlibMetadata {
             description: Some("CPU Core: -; CPU Maximum Speed: 133MHz;".to_string()),
             designator: Some("U?".to_string()),
@@ -2124,7 +2158,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("npnp_schlib_multi_{timestamp}.SchLib"));
+        let path = std::env::temp_dir().join(format!("export_schlib_multi_{timestamp}.SchLib"));
         let name_a = format!("{}1", "A".repeat(31));
         let name_b = format!("{}2", "A".repeat(31));
         let component_a = build_component_from_payload(&sample_payload(), &name_a).unwrap();
@@ -2148,8 +2182,8 @@ mod tests {
 
         let first_key = "A".repeat(31);
         let second_key = format!("{}{}", "A".repeat(29), "_2");
-        assert!(compound.open_stream(format!("/{first_key}/Data")).is_ok());
-        assert!(compound.open_stream(format!("/{second_key}/Data")).is_ok());
+        assert!(compound.open_stream(&format!("/{first_key}/Data")).is_ok());
+        assert!(compound.open_stream(&format!("/{second_key}/Data")).is_ok());
 
         std::fs::remove_file(path).ok();
     }
@@ -2322,5 +2356,61 @@ mod tests {
         assert_eq!(left.length_raw, common::raw_from_symbol_units(15.0));
         assert_eq!(right.orientation, 0);
         assert_eq!(left.orientation, 2);
+    }
+
+    #[test]
+    fn a_sentinel_fill_colour_exports_a_transparent_area() {
+        let build = |fill: i32| {
+            super::build_component_from_payload_with_metadata_and_color(
+                &sample_payload(),
+                "TEST/COMP",
+                &SchlibMetadata::default(),
+                0x000000,
+                fill,
+            )
+            .unwrap()
+        };
+        let colored = build(0xFFFFE0);
+        let no_fill = build(super::NO_FILL_BGR);
+
+        assert!(!colored.rectangles.is_empty(), "the fixture draws a body");
+        assert!(
+            colored
+                .rectangles
+                .iter()
+                .all(|rect| rect.is_filled && !rect.is_transparent)
+        );
+        assert!(
+            no_fill
+                .rectangles
+                .iter()
+                .all(|rect| !rect.is_filled && rect.is_transparent),
+            "no colour must leave the body unfilled, whatever the shape asked for"
+        );
+
+        // Altium writes a boolean only when it is set, so "not filled" is the
+        // absence of `ISSOLID` rather than an `ISSOLID=F`.
+        let filled_text = schlib_text(&colored, "filled");
+        let none_text = schlib_text(&no_fill, "none");
+        assert!(filled_text.contains("|ISSOLID=T|"));
+        assert!(none_text.contains("|TRANSPARENT=T|"));
+        assert!(!none_text.contains("|ISSOLID=T|"));
+    }
+
+    /// Writes `component` to a scratch SchLib and returns its record text.
+    fn schlib_text(component: &super::Component, tag: &str) -> String {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("export_schlib_{tag}_{timestamp}.SchLib"));
+        super::write_schlib(component, &path).unwrap();
+
+        let file = File::open(&path).unwrap();
+        let mut compound = cfb::CompoundFile::open(file).unwrap();
+        let mut data_stream = compound.open_stream("/TEST_COMP/Data").unwrap();
+        let mut data = Vec::new();
+        data_stream.read_to_end(&mut data).unwrap();
+        String::from_utf8_lossy(&data).into_owned()
     }
 }

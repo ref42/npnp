@@ -247,6 +247,9 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
                 &output,
                 force,
                 language.uses_english_metadata(),
+                // The same stroke and fill the plain `export_schlib` uses.
+                0x68380B,
+                0xE0FFFF,
             )
             .await?;
             println!("SchLib saved: {}", display_path(&path));
@@ -359,6 +362,7 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
         english_metadata: language.uses_english_metadata(),
         parallel,
         continue_on_error: true,
+        append,
     })
     .await?;
     print_kicad_summary("KiCad export complete", &summary);

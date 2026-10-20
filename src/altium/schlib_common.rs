@@ -364,7 +364,7 @@ fn write_schlib(component: &Component, output_path: &Path) -> Result<()> {
             &section_keys_bytes(&component.name, &section_key),
         )?;
     }
-    compound.create_storage(format!("/{section_key}/"))?;
+    compound.create_storage(&format!("/{section_key}/"))?;
     write_stream(
         &mut compound,
         &format!("/{section_key}/Data"),
@@ -719,7 +719,7 @@ pub(super) fn section_key_from_name(name: &str) -> String {
 pub(super) fn stable_unique_id(name: &str, salt: &str) -> String {
     const ALPHABET: &[u8; 26] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let mut hash: u64 = 0xCBF29CE484222325;
-    for byte in name.bytes().chain(*b"|").chain(salt.bytes()) {
+    for byte in name.bytes().chain([b'|']).chain(salt.bytes()) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001B3);
     }
@@ -1013,7 +1013,9 @@ impl BinaryWriter {
 #[cfg(test)]
 mod tests {
     use super::{FILL_BGR, build_component, write_schlib_from_payload};
-    use crate::schlib::{SchlibMetadata, SchlibParameter, write_schlib_from_payload_with_metadata};
+    use crate::altium::schlib::{
+        SchlibMetadata, SchlibParameter, write_schlib_from_payload_with_metadata,
+    };
     use encoding_rs::GBK;
     use serde_json::json;
     use std::fs::{self, File};
@@ -1046,7 +1048,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("npnp_schlib_{timestamp}.SchLib"));
+        let path = std::env::temp_dir().join(format!("export_schlib_{timestamp}.SchLib"));
         write_schlib_from_payload(&sample_payload(), "TEST/COMP", &path).unwrap();
         let file = File::open(&path).unwrap();
         let mut compound = cfb::CompoundFile::open(file).unwrap();
@@ -1091,7 +1093,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("npnp_schlib_utf8_{timestamp}.SchLib"));
+        let path = std::env::temp_dir().join(format!("export_schlib_utf8_{timestamp}.SchLib"));
         let metadata = SchlibMetadata {
             parameters: vec![SchlibParameter {
                 name: "Manufacturer".to_string(),

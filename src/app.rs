@@ -421,6 +421,23 @@ async fn run_cadence_command(command: CadenceCommands) -> Result<()> {
             .unwrap_or("cadence_lib")
             .to_string()
     });
+    let bar = ProgressBar::new(0);
+    bar.set_style(
+        ProgressStyle::with_template("{spinner:.green} [{bar:24.cyan/blue}] {pos}/{len} | {msg}")
+            .expect("valid Cadence progress template")
+            .progress_chars("##-"),
+    );
+    bar.enable_steady_tick(Duration::from_millis(250));
+    let progress_bar = bar.clone();
+    let progress: crate::progress::ExportProgressCallback =
+        Arc::new(move |done, total, message| {
+            if progress_bar.length() != Some(total as u64) {
+                progress_bar.set_length(total as u64);
+            }
+            progress_bar.set_position(done as u64);
+            progress_bar.set_message(message.to_string());
+        });
+
     let summary = export_cadence_batch(CadenceBatchOptions {
         ids,
         output: output.clone(),
@@ -437,9 +454,10 @@ async fn run_cadence_command(command: CadenceCommands) -> Result<()> {
         continue_on_error: true,
         append,
         models: Arc::new(crate::step_model::ModelCleanup::new(!keep_model_logo)),
-        progress: None,
+        progress: Some(progress),
     })
     .await?;
+    bar.finish_and_clear();
 
     println!(
         "Cadence export complete. Total: {} | Skipped: {} | Success: {} | Failed: {}",

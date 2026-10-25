@@ -18,6 +18,12 @@ pub struct ComponentData {
     pub manufacturer: String,
     pub datasheet: String,
     pub jlc_id: String,
+    /// Package name from EasyEDA's symbol parameters (`c_para.package`).
+    #[serde(default)]
+    pub package: String,
+    /// Value/part marking from EasyEDA's symbol parameters (`c_para.Value`).
+    #[serde(default)]
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +42,22 @@ pub struct Model3dInfo {
     /// Consumers convert it into their own frame with `crate::util::model_rotation_z`.
     #[serde(default)]
     pub rotation_z: f64,
+    /// Where EasyEDA places the model, for targets that carry the model themselves
+    /// rather than letting the footprint point at a file.
+    #[serde(default)]
+    pub placement: Option<ModelPlacement>,
+}
+
+/// Where EasyEDA puts a 3D model on its footprint (`c_origin`, `z`, `c_rotation`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPlacement {
+    /// Model centre.
+    pub origin_x: f64,
+    pub origin_y: f64,
+    /// Height of the model bottom above the board.
+    pub z: f64,
+    /// Rotation about x, y and z in degrees.
+    pub rotation: [f64; 3],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

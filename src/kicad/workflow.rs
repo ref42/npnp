@@ -666,6 +666,8 @@ mod tests {
             manufacturer: "CN Manufacturer".to_string(),
             datasheet: "https://source.test/ds".to_string(),
             jlc_id: String::new(),
+            package: String::new(),
+            value: String::new(),
         };
 
         let metadata = ResolvedMetadata::from_component_data(&component_data, None);

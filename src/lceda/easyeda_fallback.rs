@@ -680,10 +680,13 @@ mod tests {
                 uuid: "model-uuid".to_string(),
                 title: "BODY-H1.0".to_string(),
                 rotation_z: 0.0,
+                placement: None,
             }),
             manufacturer: "NPNP".to_string(),
             datasheet: String::new(),
             jlc_id: String::new(),
+            package: String::new(),
+            value: String::new(),
         }
     }
 }

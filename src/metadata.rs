@@ -393,6 +393,8 @@ mod tests {
             manufacturer: String::new(),
             datasheet: String::new(),
             jlc_id: String::new(),
+            package: String::new(),
+            value: String::new(),
         };
         let metadata = ResolvedMetadata::from_component_data(&component, None);
         assert_eq!(parameter_value(&metadata, "NPNP_AUTHOR"), Some("ref42"));
@@ -563,6 +565,8 @@ mod tests {
             manufacturer: "CN Manufacturer".to_string(),
             datasheet: "https://source.test/ds".to_string(),
             jlc_id: String::new(),
+            package: String::new(),
+            value: String::new(),
         }
     }
 }

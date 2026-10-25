@@ -448,7 +448,7 @@ async fn export_batch_merged_fresh(
         .output
         .join(format!("{}.PcbLib", sanitize_filename(&library_name)));
 
-    reject_existing_merged_outputs(targets, &schlib_path, &pcblib_path)?;
+    reject_existing_merged_outputs(targets, &schlib_path, &pcblib_path, options.force)?;
     progress.note(format!("Library: {library_name}"));
 
     let mut used_symbol_names = HashSet::new();
@@ -1035,7 +1035,13 @@ fn reject_existing_merged_outputs(
     targets: ExportTargets,
     schlib_path: &Path,
     pcblib_path: &Path,
+    force: bool,
 ) -> Result<()> {
+    // `--force` is the caller saying "replace what is there", which is exactly
+    // what the merge writer does, so the guard has nothing to protect.
+    if force {
+        return Ok(());
+    }
     let mut existing = Vec::new();
     if targets.schlib && schlib_path.exists() {
         existing.push(display_path(schlib_path));
@@ -1048,7 +1054,7 @@ fn reject_existing_merged_outputs(
     }
 
     Err(AppError::Other(format!(
-        "merged output already exists: {}. Use --append to add components, or choose a new --name/delete the existing library first.",
+        "merged output already exists: {}. Use --append to add components, --force to replace the library, or choose a new --name.",
         existing.join(", ")
     )))
 }
@@ -1375,12 +1381,29 @@ mod tests {
             },
             &schlib_path,
             &pcblib_path,
+            false,
         )
         .unwrap_err()
         .to_string();
 
         assert!(err.contains("already exists"));
         assert!(err.contains("--append"));
+        assert!(err.contains("--force"));
+
+        // --force is the caller asking for the replace the merge writer does
+        // anyway, so the guard steps aside.
+        assert!(
+            reject_existing_merged_outputs(
+                ExportTargets {
+                    schlib: true,
+                    pcblib: false,
+                },
+                &schlib_path,
+                &pcblib_path,
+                true,
+            )
+            .is_ok()
+        );
         fs::remove_file(schlib_path).ok();
     }
 

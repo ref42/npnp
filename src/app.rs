@@ -232,6 +232,7 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
         output,
         schlib,
         pcblib,
+        full,
         append,
         library_name,
         parallel,
@@ -247,7 +248,7 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
     }
     if let Some(component) = component {
         let item = client.select_item(&component, index).await?;
-        let targets = AltiumTargets::resolve(schlib, pcblib, false);
+        let targets = AltiumTargets::resolve(schlib, pcblib, full);
         if targets.schlib {
             let path = export_schlib_with_options(
                 client,
@@ -284,7 +285,7 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
             output,
             schlib,
             pcblib,
-            full: !schlib && !pcblib,
+            full: full || (!schlib && !pcblib),
             merge: true,
             append,
             library_name,
@@ -308,6 +309,7 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
         symbol,
         footprint,
         model_3d,
+        full,
         output,
         append,
         library_name,
@@ -322,7 +324,7 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
             "--append requires -i because it is intended for multi-component exports".into(),
         ));
     }
-    let full = !symbol && !footprint && !model_3d;
+    let full = full || (!symbol && !footprint && !model_3d);
     if let Some(component_id) = component {
         let summary = export_kicad_single(KicadSingleOptions {
             lcsc_id: component_id,

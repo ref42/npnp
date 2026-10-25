@@ -122,6 +122,9 @@ pub struct AltiumCommands {
     /// Export PCB footprint library (.PcbLib) only
     #[arg(long)]
     pub pcblib: bool,
+    /// Export every target for this EDA tool (the default when none is given)
+    #[arg(long)]
+    pub full: bool,
     /// Append components to existing libraries in the output directory
     #[arg(long)]
     pub append: bool,
@@ -158,6 +161,9 @@ pub struct KicadCommands {
     /// Export 3D STEP models only
     #[arg(long = "3d")]
     pub model_3d: bool,
+    /// Export every target for this EDA tool (the default when none is given)
+    #[arg(long)]
+    pub full: bool,
     /// Output directory for KiCad libraries
     #[arg(long, short = 'o', default_value = "kicad_libs")]
     pub output: PathBuf,

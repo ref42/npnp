@@ -5,7 +5,7 @@
 <h1 align="center">npnp (Normalize Pin Net Pad)</h1>
 
 <p align="center">
-  <strong>批量将立创商城元件导出为 Altium Designer（AD）、KiCad 可用格式的命令行工具。</strong>
+  <strong>批量将立创商城元件导出为 Altium Designer（AD）、KiCad、Cadence（OrCAD Capture / Allegro）可用格式的命令行工具。</strong>
 </p>
 
 <p align="center">
@@ -49,11 +49,20 @@
 - [x] 支持多个器件合并导出到同一组 `.SchLib` / `.PcbLib`。
 - [x] 支持向已有的 npnp 合并库追加新器件，避免因为同名库覆盖而丢失已有器件。
 
+### Cadence（OrCAD Capture / Allegro）部分
+
+- [x] 导出 `Capture` 原理图符号：一个 `Library XML` 文件，在 `Capture` 中通过 `File > Import > Library XML` 转换为 `.olb`；立创 EDA 的多 part 符号会导出为同一个器件的多个 section。
+- [x] 导出 `Allegro` 封装：每个封装一个 `SKILL` 脚本，外加一个库脚本；在 `Allegro PCB Editor` 命令窗口执行 `skill load("<库>_allegro/<库>.il")`，即在同一目录生成 `.dra`、`.psm` 和 `.pad`。
+- [x] 导出 `3D` 模型（`step`），封装中已按立创 EDA 的位置映射好模型。
+- [x] 标准封装（贴片阻容、`SOT`、`SOD`、`SOIC`、`QFN` 等）按 `IPC-7352` 计算焊盘并核对厂家焊盘；其余封装保留厂家焊盘，按 `IPC-7352` 规则生成丝印、装配层和占位区。
+- [x] `npnp` 本身不调用任何 `Cadence` 程序，导入由用户在 `Cadence` 中完成。
+
 ### 共同部分
 
 - [x] 支持选择中文或英文元数据导出。
 - [x] 支持多线程/并行下载和批处理。
 - [x] 支持单独导出 `3D` 模型。
+- [x] 默认去除下载 `3D` 模型上的立创 EDA 标志（水印）并重建模型；无法安全去除时保留原模型，并在导出结果中列出这些元件。`--keep-model-logo` 可保留原始模型。
 - [x] 支持导出原始 symbol / footprint JSON，便于问题排查。
 - [x] 支持 Windows、macOS、Linux 多平台发布包。
 
@@ -64,12 +73,13 @@
 
 - [x] `KiCad 9.0` ~ `Latest`
 - [x] `Altium Designer 23.x` ~ `Latest`
+- [x] `Cadence SPB 26.1`（OrCAD X Capture / Allegro X）；`Allegro` 封装脚本需要支持 `SKILL` 的版本（`Allegro PCB Designer` 或 `OrCAD PCB Designer Professional`）
 
 ## npnp 未来想做啥？
 
 - [ ] 继续完善现有 Altium / KiCad 工作流，修复更多隐藏的 `bug`。
 - [ ] 改进不规则焊盘导出 `.PcbLib` 时的阻焊处理。
-- [ ] 尽可能移除或隐藏下载 3D 模型中的 logo/watermark 几何体。
+- [ ] 支持更多 `EDA` 工具，例如 `PADS`。
 - [ ] 增加更多异常符号、封装、3D 模型的回归测试样例。
 - [ ] 完善批量合并、追加和 CI 使用文档。
 
@@ -103,6 +113,10 @@ npnp kicad C2040 -o kicad_libs --name MyParts
 npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42
 npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42
 
+npnp cadence C2040 -o cadence_libs --name MyParts
+npnp cadence -i ids.txt -o cadence_libs --name MyParts -j 42
+npnp cadence -i new_ids.txt -o cadence_libs --name MyParts --append -j 42
+
 npnp model C2040 -o step_models
 npnp model -i ids.txt -o step_models -j 42
 ```
@@ -115,12 +129,14 @@ npnp model -i ids.txt -o step_models -j 42
 - `-j`：使用 `-i` 时的最大并发导出数。
 - `-i`：从任意纯文本文件读取器件 ID，文件名不要求使用 `.txt` 扩展名。
 - `--name`：可选参数，用于覆盖生成库的基础名称。
-- `--append`：更新 `-o` 指定目录中的库集合。Altium 会发现合并的 `.SchLib`/`.PcbLib`，KiCad 会发现 `.kicad_sym`、`.pretty` 和 `.3dshapes` 库。
+- `--append`：更新 `-o` 指定目录中的库集合。Altium 会发现合并的 `.SchLib`/`.PcbLib`，KiCad 会发现 `.kicad_sym`、`.pretty` 和 `.3dshapes` 库，Cadence 会向已有的 `<库名>.xml` 和 `_allegro` 目录追加。
+- `--keep-model-logo`：保留下载 `3D` 模型上的立创 EDA 标志（默认会去除）。
 
 ### 导出约定
 
 - 生成的器件和模型名称是确定性的：`<source-name>__<LCSC-ID>`。原理图库元数据中仍会保留 `NPNP_COMPONENT_ID`。
 - 缺少 STEP 数据不会阻止符号或封装导出；目标支持 3D 导出时，终端摘要会标明缺少模型的数量。
+- Cadence 目标写出 `<库名>.xml`（Capture Library XML）、`<库名>_allegro/`（每个封装一个 `SKILL` 脚本加一个库脚本）和 `<库名>_step/`（`3D` 模型）。`npnp` 不调用 Cadence：`.olb` 由 Capture 的 `File > Import > Library XML` 生成，`.dra`/`.psm`/`.pad` 由 Allegro 命令窗口执行 `skill load("<目录>/<库名>.il")` 生成。
 - 新建合并库不会覆盖已有库。使用 `--append` 保留已有库并添加新器件；只有在确实需要替换独立生成文件时才使用 `--force`。
 
 ## 导出示例

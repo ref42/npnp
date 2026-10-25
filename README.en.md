@@ -5,7 +5,7 @@
 <h1 align="center">npnp (Normalize Pin Net Pad)</h1>
 
 <p align="center">
-  <strong>A command‑line tool for batch‑exporting components from LCSC for Altium Designer (AD) and KiCad to use.</strong>
+  <strong>A command-line tool for batch-exporting components from LCSC for Altium Designer (AD), KiCad and Cadence (OrCAD Capture / Allegro) to use.</strong>
 </p>
 
 <p align="center">
@@ -49,11 +49,20 @@ If you find an issue in exported symbols, footprints, 3D models, or metadata, pl
 - [x] Export multiple components into one merged `.SchLib` / `.PcbLib` pair.
 - [x] Append new components to an existing npnp merged library without replacing the old components.
 
+### Cadence (OrCAD Capture / Allegro)
+
+- [x] Export `Capture` schematic symbols as one `Library XML` file, which `Capture` converts to an `.olb` with `File > Import > Library XML`; multi-part EasyEDA symbols become sections of a single Capture part.
+- [x] Export `Allegro` footprints as one `SKILL` script per footprint plus one library script; `skill load("<library>_allegro/<library>.il")` in the `Allegro PCB Editor` command window builds the `.dra`, `.psm` and `.pad` files in that folder.
+- [x] Export `3D` models (`step`), mapped into the footprint at the position EasyEDA uses.
+- [x] Standard packages (chip resistors and capacitors, `SOT`, `SOD`, `SOIC`, `QFN`, ...) get `IPC-7352` lands checked against the manufacturer's; other packages keep the manufacturer's lands, with silkscreen, assembly layer and place bound generated per `IPC-7352`.
+- [x] `npnp` runs no Cadence program itself; the import is done inside `Cadence`.
+
 ### Shared Features
 
 - [x] Export metadata in Chinese or English.
 - [x] Use parallel download and batch processing.
 - [x] Export `3D` models independently.
+- [x] Remove the EasyEDA logo (watermark) from downloaded `3D` models by default and rebuild them; a model the logo cannot be removed from safely is exported as it is and listed in the export result. `--keep-model-logo` keeps the original models.
 - [x] Export raw symbol / footprint JSON for troubleshooting.
 - [x] Provide multi-platform Windows, macOS, and Linux release packages.
 
@@ -64,12 +73,13 @@ If you find an issue in exported symbols, footprints, 3D models, or metadata, pl
 
 - [x] `KiCad 9.0` to `Latest`
 - [x] `Altium Designer 23.x` to `Latest`
+- [x] `Cadence SPB 26.1` (OrCAD X Capture / Allegro X); the `Allegro` footprint scripts need a release that supports `SKILL` (`Allegro PCB Designer` or `OrCAD PCB Designer Professional`)
 
 ## What Is Planned?
 
 - [ ] Continue improving the current Altium / KiCad workflows and fix more hidden `bugs`.
 - [ ] Improve solder mask handling for irregular pads during `.PcbLib` export.
-- [ ] Explore a broadly applicable way to remove or hide logo/watermark geometry from downloaded `3D` models.
+- [ ] Support more `EDA` tools, such as `PADS`.
 - [ ] Add more regression fixtures for unusual symbols, footprints, and `3D` models.
 - [ ] Improve documentation for batch merge, append, and CI workflows.
 
@@ -103,6 +113,10 @@ npnp kicad C2040 -o kicad_libs --name MyParts
 npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42
 npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42
 
+npnp cadence C2040 -o cadence_libs --name MyParts
+npnp cadence -i ids.txt -o cadence_libs --name MyParts -j 42
+npnp cadence -i new_ids.txt -o cadence_libs --name MyParts --append -j 42
+
 npnp model C2040 -o step_models
 npnp model -i ids.txt -o step_models -j 42
 ```
@@ -115,12 +129,14 @@ Useful shared flags:
 - `-j`: maximum number of concurrent exports when using `-i`.
 - `-i`: reads IDs from any plain-text file; the filename does not need a `.txt` extension.
 - `--name`: optional override for the generated library base name.
-- `--append` updates the library collection inside the selected `-o` directory. For Altium it discovers the merged `.SchLib`/`.PcbLib`; for KiCad it discovers the `.kicad_sym`, `.pretty`, and `.3dshapes` libraries.
+- `--append` updates the library collection inside the selected `-o` directory. For Altium it discovers the merged `.SchLib`/`.PcbLib`; for KiCad it discovers the `.kicad_sym`, `.pretty`, and `.3dshapes` libraries; for Cadence it adds to the existing `<library>.xml` and `_allegro` folder.
+- `--keep-model-logo`: keep the EasyEDA logo on downloaded `3D` models (it is removed by default).
 
 ### Export contract
 
 - Generated component and model names are deterministic: `<source-name>__<LCSC-ID>`. The ID is also retained in the schematic metadata as `NPNP_COMPONENT_ID`.
 - Missing STEP data does not prevent symbol or footprint export; the console summary identifies missing-model counts where the target supports 3D output.
+- The Cadence target writes `<library>.xml` (Capture Library XML), `<library>_allegro/` (one `SKILL` script per footprint plus the library script) and `<library>_step/` (the `3D` models). `npnp` calls no Cadence program: the `.olb` comes from `File > Import > Library XML` in Capture, and the `.dra`/`.psm`/`.pad` files from `skill load("<folder>/<library>.il")` in the Allegro command window.
 - Fresh merged output refuses to overwrite an existing library. Use `--append` to preserve the existing library collection and add new components, or `--force` when replacing standalone generated files is intentional.
 
 ## Export Examples

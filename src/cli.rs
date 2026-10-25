@@ -63,6 +63,9 @@ pub enum Commands {
         /// Replace existing STEP files
         #[arg(long)]
         force: bool,
+        /// Keep the EasyEDA logo on downloaded 3D models (it is removed by default)
+        #[arg(long)]
+        keep_model_logo: bool,
     },
     /// Search by keyword and download OBJ/MTL by result index
     DownloadObj {
@@ -134,6 +137,9 @@ pub struct AltiumCommands {
     /// Replace existing generated outputs
     #[arg(long)]
     pub force: bool,
+    /// Keep the EasyEDA logo on downloaded 3D models (it is removed by default)
+    #[arg(long)]
+    pub keep_model_logo: bool,
 }
 
 #[derive(Debug, Args)]
@@ -173,6 +179,9 @@ pub struct KicadCommands {
     /// Metadata language: auto, en, or zh
     #[arg(long, value_enum, default_value_t = MetadataLanguage::Auto)]
     pub language: MetadataLanguage,
+    /// Keep the EasyEDA logo on downloaded 3D models (it is removed by default)
+    #[arg(long)]
+    pub keep_model_logo: bool,
 }
 
 #[derive(Debug, Args)]

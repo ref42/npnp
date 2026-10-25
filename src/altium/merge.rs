@@ -1353,9 +1353,13 @@ mod tests {
         let payload: Value =
             serde_json::from_str(include_str!("../../tests/fixtures/easyeda_footprint.json"))
                 .expect("footprint fixture");
-        let library =
-            build_pcblib_from_payload(&payload, "ROUNDTRIP_FOOTPRINT", Some(STEP_FIXTURE))
-                .expect("build footprint library");
+        let library = build_pcblib_from_payload(
+            &payload,
+            "ROUNDTRIP_FOOTPRINT",
+            Some(STEP_FIXTURE),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .expect("build footprint library");
         let records = pcblib_records_from_library(&library).expect("capture PcbLib records");
         assert_eq!(records.components.len(), 1);
         assert_eq!(records.models.len(), 1);
@@ -1370,8 +1374,13 @@ mod tests {
 
         // Appending reads an existing library's models back and writes them out
         // again, so a model stream has to survive that round trip byte for byte.
-        let again = build_pcblib_from_payload(&payload, "ROUNDTRIP_FOOTPRINT", Some(STEP_FIXTURE))
-            .expect("build footprint library again");
+        let again = build_pcblib_from_payload(
+            &payload,
+            "ROUNDTRIP_FOOTPRINT",
+            Some(STEP_FIXTURE),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .expect("build footprint library again");
         let again = pcblib_records_from_library(&again).expect("capture PcbLib records again");
         let expected = again.models[0].stream.read().expect("read captured model");
         let actual = round_trip.models[0]
@@ -1388,8 +1397,13 @@ mod tests {
             "../../tests/fixtures/lceda_footprint_c29073231.json"
         ))
         .expect("footprint fixture");
-        let library = build_pcblib_from_payload(&payload, "MASK_FOOTPRINT", None)
-            .expect("build footprint library");
+        let library = build_pcblib_from_payload(
+            &payload,
+            "MASK_FOOTPRINT",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .expect("build footprint library");
         assert!(
             !library.components[0]
                 .extended_primitive_information

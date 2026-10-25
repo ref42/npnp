@@ -91,10 +91,12 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
             output,
             parallel,
             force,
+            keep_model_logo,
         } => {
+            let models = Arc::new(crate::step_model::ModelCleanup::new(!keep_model_logo));
             if let Some(component) = component {
                 let item = client.select_item(&component, index).await?;
-                let path = download_step(&client, &item, &output, force).await?;
+                let path = download_step(&client, &item, &output, force, &models).await?;
                 println!("STEP saved: {}", display_path(&path));
             } else {
                 let input = input.ok_or_else(|| {
@@ -104,7 +106,7 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
                 })?;
                 let content = std::fs::read_to_string(&input)?;
                 let ids = parse_lcsc_ids(&content);
-                export_models(&client, ids, output, parallel, force).await?;
+                export_models(&client, ids, output, parallel, force, models).await?;
             }
         }
         Commands::DownloadObj {
@@ -147,6 +149,7 @@ async fn export_models(
     output: std::path::PathBuf,
     parallel: usize,
     force: bool,
+    models: Arc<crate::step_model::ModelCleanup>,
 ) -> Result<()> {
     if ids.is_empty() {
         return Err(crate::error::AppError::Other(
@@ -168,13 +171,14 @@ async fn export_models(
         let client = client.clone();
         let output = output.clone();
         let semaphore = semaphore.clone();
+        let models = Arc::clone(&models);
         tasks.spawn(async move {
             let _permit = semaphore
                 .acquire_owned()
                 .await
                 .expect("model download semaphore should remain open");
             let result = match client.select_item(&id, 1).await {
-                Ok(item) => download_step(&client, &item, &output, force).await,
+                Ok(item) => download_step(&client, &item, &output, force, &models).await,
                 Err(err) => Err(err),
             };
             (id, result)
@@ -233,7 +237,9 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
         parallel,
         language,
         force,
+        keep_model_logo,
     } = command;
+    let models = Arc::new(crate::step_model::ModelCleanup::new(!keep_model_logo));
     if append && component.is_some() {
         return Err(crate::error::AppError::Other(
             "--append requires -i because it is intended for multi-component exports".into(),
@@ -257,7 +263,7 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
             println!("SchLib saved: {}", display_path(&path));
         }
         if targets.pcblib {
-            let path = export_pcblib(client, &item, &output, force).await?;
+            let path = export_pcblib(client, &item, &output, force, &models).await?;
             println!("PcbLib saved: {}", display_path(&path));
         }
         return Ok(());
@@ -286,6 +292,7 @@ async fn run_altium_command(client: &LcedaClient, command: AltiumCommands) -> Re
             continue_on_error: true,
             english_metadata: language.uses_english_metadata(),
             force,
+            models: Arc::clone(&models),
         },
     )
     .await?;
@@ -308,6 +315,7 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
         force,
         project_relative,
         language,
+        keep_model_logo,
     } = command;
     if append && component.is_some() {
         return Err(crate::error::AppError::Other(
@@ -334,6 +342,7 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
                 project_relative,
             ),
             english_metadata: language.uses_english_metadata(),
+            models: Arc::new(crate::step_model::ModelCleanup::new(!keep_model_logo)),
         })
         .await?;
         print_kicad_summary("KiCad export complete", &summary);
@@ -365,6 +374,7 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
         parallel,
         continue_on_error: true,
         append,
+        models: Arc::new(crate::step_model::ModelCleanup::new(!keep_model_logo)),
     })
     .await?;
     print_kicad_summary("KiCad export complete", &summary);

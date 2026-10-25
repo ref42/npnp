@@ -29,6 +29,8 @@ pub struct KicadSingleOptions {
     pub library: KicadLibraryOptions,
     pub export: KicadExportOptions,
     pub english_metadata: bool,
+    /// What happens to the downloaded 3D model before it is written.
+    pub models: std::sync::Arc<crate::step_model::ModelCleanup>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +45,8 @@ pub struct KicadBatchOptions {
     /// the export owns the library and refuses to write into one that is there,
     /// which is what Altium's append flag means as well.
     pub append: bool,
+    /// What happens to downloaded 3D models before they are written (logo removal).
+    pub models: Arc<crate::step_model::ModelCleanup>,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +119,7 @@ pub async fn export_kicad_single(options: KicadSingleOptions) -> Result<KicadBat
         // One component named one library: it is written into whatever is there,
         // which is how the CLI's --symbol-lib/--footprint-lib work.
         append: true,
+        models: options.models,
     };
     export_kicad_batch(batch_options).await
 }
@@ -215,6 +220,7 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
     };
     let semaphore = Arc::new(Semaphore::new(parallel));
     let mut join_set = JoinSet::new();
+    let models = Arc::clone(&options.models);
 
     for id in ids {
         let api = api.clone();
@@ -224,6 +230,7 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
         let export_options = export_options.clone();
         let semaphore = semaphore.clone();
         let in_flight = Arc::clone(&in_flight);
+        let models = Arc::clone(&models);
         join_set.spawn(async move {
             let _permit = semaphore
                 .acquire_owned()
@@ -241,6 +248,7 @@ pub async fn export_kicad_batch(options: KicadBatchOptions) -> Result<KicadBatch
                     &export_options,
                     &model_status,
                     &id,
+                    &models,
                 ),
             )
             .await
@@ -457,6 +465,7 @@ async fn export_one_kicad_component(
     options: &KicadExportOptions,
     model_status: &ModelStageStatus,
     lcsc_id: &str,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<KicadExportedComponent> {
     validate_lcsc_id(lcsc_id)?;
     let mut timings = KicadStageTimings::default();
@@ -490,6 +499,7 @@ async fn export_one_kicad_component(
                 manager,
                 lcsc_id,
                 model_status,
+                models,
             )
             .await?,
         );

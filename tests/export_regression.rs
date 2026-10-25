@@ -48,9 +48,13 @@ fn fixture_payloads_write_openable_altium_stream_layouts() {
     assert!(schlib_data.contains("|MODELTYPE=PCBLIB|"));
     assert!(schlib_data.contains("|MODELDATAFILEENTITY1=Regression.PcbLib|"));
 
-    let pcblib =
-        build_pcblib_from_payload(&footprint_payload, "REGRESSION_QFN", Some(STEP_FIXTURE))
-            .expect("build PCB library from fixture");
+    let pcblib = build_pcblib_from_payload(
+        &footprint_payload,
+        "REGRESSION_QFN",
+        Some(STEP_FIXTURE),
+        &npnp::step_model::ModelCleanup::new(false),
+    )
+    .expect("build PCB library from fixture");
     let pcb_component = pcblib
         .components
         .first()

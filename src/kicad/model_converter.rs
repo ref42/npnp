@@ -67,6 +67,7 @@ pub async fn convert_3d_model(
     lib_manager: &LibraryManager,
     lcsc_id: &str,
     model_status: &ModelStageStatus,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<ModelExportStatus> {
     let Some(model_info) = &component_data.model_3d else {
         log::warn!("No 3D model metadata available for this component");
@@ -88,7 +89,8 @@ pub async fn convert_3d_model(
 
     match result {
         Ok(step_data) => {
-            lib_manager.write_step_model(&model_name, &step_data)?;
+            let cleaned = models.clean(lcsc_id, &step_data);
+            lib_manager.write_step_model(&model_name, cleaned.as_ref())?;
             log::debug!("Wrote STEP model: {}", model_name);
             Ok(ModelExportStatus::Written)
         }

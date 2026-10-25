@@ -32,11 +32,13 @@ pub fn build_pcblib_from_payload(
     payload: &Value,
     component_name: &str,
     step_bytes: Option<&[u8]>,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<PcbLibrary> {
     let step_data = step_bytes.map(|bytes| {
-        // LCEDA does not always author a model with its underside on the board plane, so
-        // the embedded geometry is moved there (see `crate::step_model`).
-        ModelData::spill_copy(crate::step_model::place_step_on_board(bytes).as_ref())
+        // The EasyEDA logo comes off first, then LCEDA's frame is moved onto the board
+        // plane: the model has no origin of its own to correct (see `crate::step_model`).
+        let bytes = models.clean(component_name, bytes);
+        ModelData::spill_copy(crate::step_model::place_step_on_board(bytes.as_ref()).as_ref())
     });
     build_pcblib_from_payload_with_model(payload, component_name, step_data)
 }
@@ -1805,9 +1807,13 @@ mod tests {
 ["TRACK","t1",0,"",3,6,0,0,10,0]
 ["CIRCLE","c1",0,"",3,2,5,5,2]
 ["FILL","f1",0,"",49,0.2,0,[[0,0,"L",10,0,10,10,0,10,0,0]],0]"#, "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"0,0,0,1,2,3"}}});
-        let library =
-            build_pcblib_from_payload(&payload, "TEST", Some(b"ISO-10303-21;END-ISO-10303-21;"))
-                .unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "TEST",
+            Some(b"ISO-10303-21;END-ISO-10303-21;"),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
         assert_eq!(component.pads.len(), 1);
         assert_eq!(component.tracks.len(), 1);
@@ -1828,9 +1834,13 @@ mod tests {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
             "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"236.22,192.913,0,90,0,0,0,0,0"}}});
-        let library =
-            build_pcblib_from_payload(&payload, "SOP-8", Some(b"ISO-10303-21;END-ISO-10303-21;"))
-                .unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "SOP-8",
+            Some(b"ISO-10303-21;END-ISO-10303-21;"),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let body = &library.components[0].bodies[0];
 
         // EasyEDA stores 90 degrees; Altium's footprint frame is the Y mirror of EasyEDA's, so the
@@ -1844,9 +1854,13 @@ mod tests {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
             "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"192.913,236.22,0,0,0,0,0,0,0"}}});
-        let library =
-            build_pcblib_from_payload(&payload, "SOIC-8", Some(b"ISO-10303-21;END-ISO-10303-21;"))
-                .unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "SOIC-8",
+            Some(b"ISO-10303-21;END-ISO-10303-21;"),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let body = &library.components[0].bodies[0];
 
         assert_eq!(body.model_3d_rot_z, 0.0);
@@ -1861,9 +1875,13 @@ mod tests {
             "../../tests/fixtures/lceda_footprint_c668205.json"
         ))
         .unwrap();
-        let library =
-            build_pcblib_from_payload(&payload, "SOP-8", Some(b"ISO-10303-21;END-ISO-10303-21;"))
-                .unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "SOP-8",
+            Some(b"ISO-10303-21;END-ISO-10303-21;"),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let body = &library.components[0].bodies[0];
 
         assert_eq!(body.model_3d_rot_z, 90.0);
@@ -1876,8 +1894,13 @@ mod tests {
             "../../tests/fixtures/lceda_footprint_c29073231.json"
         ))
         .unwrap();
-        let library =
-            build_pcblib_from_payload(&payload, "QFN-19_L5.0-W3.0_CD4583GQVE", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "QFN-19_L5.0-W3.0_CD4583GQVE",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
 
         // C29073231 has five irregular (polygon) pads: 1, 6, 7, 9 and 15.
@@ -1952,7 +1975,13 @@ mod tests {
         let payload = json!({"result": {"display_title": "QFN-60_L7.0-W7.0-P0.40-TL-EP3.4", "dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]
 ["POLY","body",0,"",48,2,[-120,120,"L",120,120,120,-120,-120,-120,-120,120],0]"#}});
-        let library = build_pcblib_from_payload(&payload, "RP2350A_C42411118", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "RP2350A_C42411118",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
         assert_eq!(library.models.len(), 0);
         assert_eq!(component.bodies.len(), 0);
@@ -1975,7 +2004,13 @@ mod tests {
 ["PAD","e1",0,"",1,"1",0,0,0,null,["RECT",20,30,0],[],0,0,0,1]"#,
             "model_3d": {"title":"BODY-H1.2", "uri":"modeluuid", "transform":"192.913,236.22,0,0,0,0,0,0,0"}}});
 
-        let library = build_pcblib_from_payload(&payload, "ESOP-8", Some(step.as_bytes())).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "ESOP-8",
+            Some(step.as_bytes()),
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let embedded = library.models[0].step_data.read().unwrap().into_owned();
         let embedded = String::from_utf8(embedded).unwrap();
 
@@ -1992,6 +2027,7 @@ mod tests {
             &payload,
             "MODEL_FALLBACK",
             Some(b"ISO-10303-21;END-ISO-10303-21;"),
+            &crate::step_model::ModelCleanup::new(false),
         )
         .unwrap();
 
@@ -2011,8 +2047,13 @@ mod tests {
     fn exports_poly_pad_as_hotspot_with_shape_regions() {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e1",0,"",1,"20",-39.37,61.39,0,null,["POLY",[-45.315,76.467,"L",-45.315,51.985,-37.945,44.948,-33.474,44.863,-33.419,76.471,-45.315,76.467]],[],0.003,-0.003,90,1,0,1.9689999999999999,1.9689999999999999,0,0,0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "UFQFPN-20_L3.0-W3.0-P0.50-TL", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "UFQFPN-20_L3.0-W3.0-P0.50-TL",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
         assert_eq!(component.pads.len(), 1);
         assert_eq!(component.pads[0].shape_top, PAD_SHAPE_ROUND);
@@ -2041,7 +2082,13 @@ mod tests {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e8",0,"",1,"1",-28,0.2,0,null,["POLY",[-40.005,9.698,"L",-16.005,9.698,-16.005,-9.302,-40.005,-9.302,-40.005,9.698]],[],-0.005,-0.003,0,1,0,null,null,null,null,0]
 ["PAD","e9",0,"",1,"2",28,-0.2,0,null,["POLY",[15.995,9.304,"L",39.995,9.304,39.995,-9.696,15.995,-9.696,15.995,9.304]],[],-0.005,0.004,0,1,0,null,null,null,null,0]"#}});
-        let library = build_pcblib_from_payload(&payload, "SOD-323", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "SOD-323",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
 
         assert_eq!(component.pads.len(), 2);
@@ -2094,8 +2141,13 @@ mod tests {
     fn maps_easyeda_slot_pad_to_altium_slot_drill() {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["PAD","e56",0,"",12,"13",-170.275,71.855,0,["SLOT",59.055,23.622],["OVAL",43.307,78.74],[],0.002,-0.003,90,1,0,1.9689999999999999,1.9689999999999999,0,0,0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "USB-C-SMD_TYPE-C-16PIN-2MD-073", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "USB-C-SMD_TYPE-C-16PIN-2MD-073",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let pad = &library.components[0].pads[0];
 
         assert_eq!(pad.hole_type, PAD_HOLE_SLOT);
@@ -2109,8 +2161,13 @@ mod tests {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["POLY","e2",0,"",13,9.843,["CIRCLE",-113.775,51.375,4.92],0]
 ["FILL","e54",0,"",12,0.2,0,["CIRCLE",-113.775,51.375,13.78],0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "USB-C-SMD_TYPE-C-16PIN-2MD-073", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "USB-C-SMD_TYPE-C-16PIN-2MD-073",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
         let pad = &component.pads[0];
 
@@ -2135,8 +2192,13 @@ mod tests {
     fn maps_unmarked_nested_multilayer_fill_circle_to_multilayer_region() {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["FILL","e55",0,"",12,0.2,0,[["CIRCLE",113.785,51.375,13.78]],0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "USB-C-SMD_TYPE-C-16PIN-2MD-073", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "USB-C-SMD_TYPE-C-16PIN-2MD-073",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
 
         assert_eq!(component.pads.len(), 0);
@@ -2153,8 +2215,13 @@ mod tests {
     fn maps_document_circle_to_mechanical_arc() {
         let payload = json!({"result": {"dataStr": r#"["DOCTYPE","FOOTPRINT","1.8"]
 ["POLY","e2",0,"",13,9.843,["CIRCLE",-113.775,51.375,4.92],0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "USB-C-SMD_TYPE-C-16PIN-2MD-073", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "USB-C-SMD_TYPE-C-16PIN-2MD-073",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
         let arc = &component.arcs[0];
 
@@ -2171,8 +2238,13 @@ mod tests {
 ["POLY","e3",0,"",13,9.843,["CIRCLE",113.785,51.375,4.92],0]
 ["FILL","e54",0,"",12,0.2,0,["CIRCLE",-113.775,51.375,13.78],0]
 ["FILL","e55",0,"",12,0.2,0,["CIRCLE",113.785,51.375,13.78],0]"#}});
-        let library =
-            build_pcblib_from_payload(&payload, "USB-C-SMD_TYPE-C-16PIN-2MD-073", None).unwrap();
+        let library = build_pcblib_from_payload(
+            &payload,
+            "USB-C-SMD_TYPE-C-16PIN-2MD-073",
+            None,
+            &crate::step_model::ModelCleanup::new(false),
+        )
+        .unwrap();
         let component = &library.components[0];
         let alignment_pads: Vec<_> = component
             .pads

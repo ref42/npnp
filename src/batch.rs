@@ -39,6 +39,8 @@ pub struct BatchOptions {
     pub continue_on_error: bool,
     pub english_metadata: bool,
     pub force: bool,
+    /// What happens to downloaded 3D models before they are written (logo removal).
+    pub models: Arc<crate::step_model::ModelCleanup>,
 }
 
 #[derive(Debug, Clone)]
@@ -762,6 +764,7 @@ async fn export_merged_components_parallel(
         .collect();
 
     let mut exported = build_merged_components_parallel(
+        Arc::clone(&options.models),
         client,
         targets,
         named,
@@ -903,6 +906,7 @@ async fn prepare_merged_component(
 
 #[allow(clippy::too_many_arguments)]
 async fn build_merged_components_parallel(
+    models: Arc<crate::step_model::ModelCleanup>,
     client: &LcedaClient,
     targets: ExportTargets,
     named: Vec<NamedMergeComponent>,
@@ -920,15 +924,21 @@ async fn build_merged_components_parallel(
         let client = client.clone();
         let semaphore = semaphore.clone();
         let merged_pcblib_file = merged_pcblib_file.clone();
+        let models = Arc::clone(&models);
         join_set.spawn(async move {
             let _permit = semaphore
                 .acquire_owned()
                 .await
                 .expect("merge build semaphore should remain open");
             let id = named.id.clone();
-            let result =
-                build_named_merged_component(&client, targets, named, merged_pcblib_file.as_str())
-                    .await;
+            let result = build_named_merged_component(
+                &client,
+                targets,
+                named,
+                merged_pcblib_file.as_str(),
+                &models,
+            )
+            .await;
             (id, result)
         });
     }
@@ -971,6 +981,7 @@ async fn build_named_merged_component(
     targets: ExportTargets,
     named: NamedMergeComponent,
     merged_pcblib_file: &str,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<IndexedMergeArtifacts> {
     let schlib_record = if targets.schlib {
         let symbol_data = named
@@ -1001,6 +1012,7 @@ async fn build_named_merged_component(
                 &named.item,
                 footprint_data,
                 &named.footprint_name,
+                models,
             )
             .await?,
         )
@@ -1204,7 +1216,7 @@ async fn export_component(
 
     if targets.pcblib {
         let pcblib_dir = options.output.join("pcblib");
-        export_pcblib(client, &item, &pcblib_dir, options.force).await?;
+        export_pcblib(client, &item, &pcblib_dir, options.force, &options.models).await?;
     }
 
     Ok(ExportedComponent { display_name })
@@ -1340,6 +1352,7 @@ mod tests {
             continue_on_error: false,
             english_metadata: false,
             force: false,
+            models: std::sync::Arc::new(crate::step_model::ModelCleanup::new(false)),
         };
 
         assert_eq!(resolve_library_name(&options), "ids");

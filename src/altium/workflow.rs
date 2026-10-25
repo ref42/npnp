@@ -38,6 +38,7 @@ pub async fn download_step(
     item: &SearchItem,
     out_dir: &Path,
     force: bool,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<PathBuf> {
     fs::create_dir_all(out_dir)?;
     let out_file = out_dir.join(item.choose_step_filename());
@@ -48,7 +49,11 @@ pub async fn download_step(
     let model_uuid = client.get_model_uuid(item).await?;
     let content = client.download_step_bytes(&model_uuid).await?;
     // The STEP is stored in LCEDA's own frame, which does not always rest on the board plane.
-    fs::write(&out_file, crate::step_model::place_step_on_board(&content))?;
+    let cleaned = models.clean(&item.lcsc_id().unwrap_or_default().to_string(), &content);
+    fs::write(
+        &out_file,
+        crate::step_model::place_step_on_board(cleaned.as_ref()),
+    )?;
     Ok(out_file)
 }
 
@@ -184,6 +189,7 @@ pub(crate) async fn load_placed_step_for_pcblib(
     client: &LcedaClient,
     item: &SearchItem,
     model_candidates: &[String],
+    models: &crate::step_model::ModelCleanup,
 ) -> Option<ModelData> {
     let mut candidates = model_candidates.to_vec();
     if item.model_uuid.is_some() {
@@ -225,11 +231,13 @@ pub(crate) async fn load_placed_step_for_pcblib(
         let _ = fs::remove_file(&downloaded);
 
         let placed = scratch_step_path();
+        let label = item.lcsc_id().unwrap_or_default().to_string();
+        let cleaned = models.clean(&label, &bytes);
         let written = fs::File::create(&placed)
             .map(BufWriter::new)
             .ok()
             .and_then(|mut writer| {
-                crate::step_model::write_placed_step(&bytes, &mut writer)
+                crate::step_model::write_placed_step(cleaned.as_ref(), &mut writer)
                     .ok()
                     .and_then(|_| writer.flush().ok())
             });
@@ -250,9 +258,10 @@ pub(crate) async fn build_pcblib_library_from_detail(
     item: &SearchItem,
     footprint_data: &Value,
     component_name: &str,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<PcbLibrary> {
     let candidates = step_model_candidates(item, footprint_data);
-    let step_data = load_placed_step_for_pcblib(client, item, &candidates).await;
+    let step_data = load_placed_step_for_pcblib(client, item, &candidates, models).await;
     build_pcblib_from_payload_with_model(footprint_data, component_name, step_data)
 }
 
@@ -306,12 +315,13 @@ pub async fn build_pcblib_library_for_item(
     client: &LcedaClient,
     item: &SearchItem,
     footprint_name: &str,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<PcbLibrary> {
     let footprint_uuid = item
         .footprint_uuid()
         .ok_or(AppError::MissingSymbolOrFootprint)?;
     let footprint_data = client.component_detail(&footprint_uuid).await?;
-    build_pcblib_library_from_detail(client, item, &footprint_data, footprint_name).await
+    build_pcblib_library_from_detail(client, item, &footprint_data, footprint_name, models).await
 }
 
 pub async fn build_schlib_component_for_item(
@@ -358,6 +368,7 @@ pub async fn export_pcblib(
     item: &SearchItem,
     out_dir: &Path,
     force: bool,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<PathBuf> {
     fs::create_dir_all(out_dir)?;
     let footprint_uuid = item
@@ -371,7 +382,8 @@ pub async fn export_pcblib(
     }
 
     let library =
-        build_pcblib_library_from_detail(client, item, &footprint_data, &footprint_name).await?;
+        build_pcblib_library_from_detail(client, item, &footprint_data, &footprint_name, models)
+            .await?;
     write_pcblib(&library, &out_file)?;
     Ok(out_file)
 }
@@ -445,6 +457,7 @@ pub async fn export_bundle(
     item: &SearchItem,
     out_dir: &Path,
     force: bool,
+    models: &crate::step_model::ModelCleanup,
 ) -> Result<BTreeMap<String, PathBuf>> {
     fs::create_dir_all(out_dir)?;
 
@@ -459,7 +472,11 @@ pub async fn export_bundle(
         let path = out_dir.join(item.choose_step_filename());
         if force || !path.exists() {
             let content = client.download_step_bytes(&model_uuid).await?;
-            fs::write(&path, crate::step_model::place_step_on_board(&content))?;
+            let cleaned = models.clean(&item.lcsc_id().unwrap_or_default().to_string(), &content);
+            fs::write(
+                &path,
+                crate::step_model::place_step_on_board(cleaned.as_ref()),
+            )?;
         }
         step_file = Some(path.clone());
         exported.insert("step".to_string(), path);

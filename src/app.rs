@@ -703,10 +703,12 @@ fn prompt_examples(invoked_as: &str) -> String {
         &["new_ids.txt", "cadence_libs", "MyParts", "42"],
     ));
     lines.push(String::new());
-    lines.push(heading("Keep the EasyEDA logo on the 3D models"));
+    lines.push(heading(
+        "Keep the EasyEDA logo on the 3D models (model, altium, kicad, cadence)",
+    ));
     lines.push(command_line(
-        format!("  {command} kicad C2040 -o kicad_libs --keep-model-logo"),
-        &["C2040", "kicad_libs"],
+        format!("  {command} model C2040 -o step_models --keep-model-logo"),
+        &["C2040", "step_models"],
     ));
     lines.push(String::new());
 

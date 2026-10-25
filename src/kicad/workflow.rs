@@ -415,7 +415,7 @@ fn reject_existing_library(options: &KicadBatchOptions, manager: &LibraryManager
         return Ok(());
     }
     Err(AppError::Other(format!(
-        "KiCad library already exists: {}. Turn on Append to add components to it, or choose another library name.",
+        "KiCad library already exists: {}. Pass --append to add components to it, --force to write into it, or choose another library name.",
         existing.join(", ")
     )))
 }

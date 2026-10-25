@@ -504,7 +504,10 @@ async fn export_one_kicad_component(
     })
 }
 
-async fn apply_requested_metadata(component_data: &mut ComponentData, client: Option<&LcscClient>) {
+pub(crate) async fn apply_requested_metadata(
+    component_data: &mut ComponentData,
+    client: Option<&LcscClient>,
+) {
     let product = if let Some(client) = client {
         client
             .product_detail_optional(&component_data.lcsc_id)
@@ -569,7 +572,7 @@ fn validate_library_options(options: &KicadLibraryOptions) -> Result<()> {
     Ok(())
 }
 
-fn validate_lcsc_id(id: &str) -> Result<()> {
+pub(crate) fn validate_lcsc_id(id: &str) -> Result<()> {
     let trimmed = id.trim();
     let Some(digits) = trimmed
         .strip_prefix('C')

@@ -1,6 +1,7 @@
-pub mod altium;
+﻿pub mod altium;
 pub mod app;
 pub mod batch;
+pub mod cadence;
 pub mod cli;
 pub mod easyeda;
 pub mod error;
@@ -8,6 +9,8 @@ pub mod kicad;
 pub mod lceda;
 pub mod lcsc;
 pub mod metadata;
+pub mod progress;
+pub mod step_logo;
 pub mod step_model;
 pub mod util;
 

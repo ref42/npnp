@@ -13,7 +13,8 @@ use crate::altium::workflow::{
     download_obj, download_step, export_easyeda_sources, export_pcblib, export_schlib_with_options,
 };
 use crate::batch::{BatchOptions, discover_altium_library_name, export_batch, parse_lcsc_ids};
-use crate::cli::{AltiumCommands, Cli, Commands, KicadCommands};
+use crate::cadence::{CadenceBatchOptions, CadenceExportOptions, export_cadence_batch};
+use crate::cli::{AltiumCommands, CadenceCommands, Cli, Commands, KicadCommands};
 use crate::error::Result;
 use crate::kicad::{
     KicadBatchOptions, KicadExportOptions, KicadLibraryOptions, KicadSingleOptions,
@@ -134,6 +135,7 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
         }
         Commands::Altium(command) => run_altium_command(&client, command).await?,
         Commands::Kicad(command) => run_kicad_command(command).await?,
+        Commands::Cadence(command) => run_cadence_command(command).await?,
     }
 
     Ok(())
@@ -366,6 +368,95 @@ async fn run_kicad_command(command: KicadCommands) -> Result<()> {
     })
     .await?;
     print_kicad_summary("KiCad export complete", &summary);
+
+    Ok(())
+}
+
+async fn run_cadence_command(command: CadenceCommands) -> Result<()> {
+    let CadenceCommands {
+        component,
+        input,
+        symbol,
+        footprint,
+        model_3d,
+        full,
+        output,
+        append,
+        library_name,
+        parallel,
+        force,
+        keep_model_logo,
+        language,
+    } = command;
+    if append && component.is_some() {
+        return Err(crate::error::AppError::Other(
+            "--append requires -i because it is intended for multi-component exports".into(),
+        ));
+    }
+    let ids = match component {
+        Some(component_id) => vec![component_id],
+        None => {
+            let input = input.ok_or_else(|| {
+                crate::error::AppError::Other(
+                    "provide a component ID or use -i <FILE> for multiple components".into(),
+                )
+            })?;
+            parse_lcsc_ids(&std::fs::read_to_string(&input)?)
+        }
+    };
+    let library_name = library_name.unwrap_or_else(|| {
+        output
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("cadence_lib")
+            .to_string()
+    });
+    let summary = export_cadence_batch(CadenceBatchOptions {
+        ids,
+        output: output.clone(),
+        library_name,
+        export: CadenceExportOptions {
+            symbol,
+            footprint,
+            model_3d,
+            full: full || (!symbol && !footprint && !model_3d),
+            force,
+        },
+        english_metadata: language.uses_english_metadata(),
+        parallel,
+        continue_on_error: true,
+        append,
+        models: Arc::new(crate::step_model::ModelCleanup::new(!keep_model_logo)),
+        progress: None,
+    })
+    .await?;
+
+    println!(
+        "Cadence export complete. Total: {} | Skipped: {} | Success: {} | Failed: {}",
+        summary.total, summary.skipped, summary.success, summary.failed
+    );
+    println!(
+        "Symbols: {} | Footprints: {} (from IPC-7352: {}) | 3D models: written {} skipped {} missing {}",
+        summary.symbols_written,
+        summary.footprints_written,
+        summary.footprints_ipc,
+        summary.models_written,
+        summary.models_skipped,
+        summary.models_missing
+    );
+    println!("Output directory: {}", display_path(&output));
+    for file in &summary.generated_files {
+        println!("Generated: {}", display_path(file));
+    }
+    if !summary.failed_ids.is_empty() {
+        println!("Failed IDs: {}", summary.failed_ids.join(", "));
+    }
+    for detail in &summary.failure_details {
+        println!("  {detail}");
+    }
+    for note in &summary.notes {
+        println!("Note: {note}");
+    }
 
     Ok(())
 }

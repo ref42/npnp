@@ -4,7 +4,6 @@ use crate::error::Result;
 use crate::kicad;
 use crate::kicad::converter::{Converter, angle_to_ki, sanitize_name};
 use crate::kicad::{FileWriteStatus, KicadExportOptions, LibraryManager};
-use crate::util::component_identity_name;
 
 const COURTYARD_CLEARANCE_MM: f64 = 0.25;
 const COURTYARD_LINE_WIDTH_MM: f64 = 0.05;
@@ -15,15 +14,77 @@ pub fn convert_footprint(
     lib_manager: &LibraryManager,
     lcsc_id: &str,
 ) -> Result<()> {
+    // Use LCSC ID as unique identifier to prevent name collisions
+    let footprint_name = format!("{}_{}", sanitize_name(&component_data.title), lcsc_id);
+    let mut ki_footprint = build_ki_footprint(component_data, &footprint_name)?;
+
+    // Add 3D model reference if available
+    if let Some(model_info) = &component_data.model_3d
+        && args.targets_model_3d()
+    {
+        // Use LCSC ID as unique identifier to prevent name collisions
+        let model_name = format!("{}_{}", sanitize_name(&model_info.title), lcsc_id);
+
+        // Prefer STEP format as it's more widely supported
+        let model_lib_name = lib_manager.model_lib_name();
+        let model_dir_name = lib_manager.model_dir_name();
+        // Default to project-relative paths (KIPRJMOD) for easier setup;
+        // --project-relative forces the library-variable form.
+        let model_path = if args.project_relative {
+            format!("${{KIPRJMOD}}/{}/{}.step", model_dir_name, model_name)
+        } else {
+            format!(
+                "${{{}}}/{}/{}.step",
+                model_lib_name, model_dir_name, model_name
+            )
+        };
+
+        ki_footprint.model_3d = Some(kicad::Ki3dModel {
+            path: model_path,
+            // The model's own coordinates already place it: its rotation is the only thing the
+            // exported footprint adds, and the STEP itself is lifted onto the board plane when it
+            // is written (see `crate::step_model`).
+            offset: (0.0, 0.0, 0.0),
+            scale: (1.0, 1.0, 1.0),
+            rotate: (
+                0.0,
+                0.0,
+                crate::util::model_rotation_z(model_info.rotation_z),
+            ),
+        });
+    }
+
+    // Export footprint
+    let exporter = kicad::FootprintExporter::new();
+    let footprint_data = exporter.export(&ki_footprint)?;
+    let (_, status) =
+        lib_manager.write_footprint_if_needed(&ki_footprint.name, &footprint_data, args.force)?;
+
+    match status {
+        FileWriteStatus::Written => log::debug!("Wrote footprint: {}", ki_footprint.name),
+        FileWriteStatus::Skipped => {
+            log::debug!("Skipped existing footprint: {}", ki_footprint.name)
+        }
+    }
+
+    Ok(())
+}
+
+/// Convert EasyEDA footprint data into the EDA-neutral `KiFootprint` model.
+///
+/// Coordinates stay in EasyEDA units (1 px = 10 mil) with Y pointing down, relative
+/// to the package bbox origin. A courtyard is generated when the source has none.
+/// No 3D model is attached; callers decide how models are referenced.
+pub fn build_ki_footprint(
+    component_data: &ComponentData,
+    footprint_name: &str,
+) -> Result<kicad::KiFootprint> {
     let ee_footprint = FootprintImporter::parse(&component_data.package_detail)?;
     let converter = Converter::new();
 
-    // Use LCSC ID as unique identifier to prevent name collisions
-    let footprint_name = component_identity_name(&sanitize_name(&component_data.title), lcsc_id);
-
     // Convert EasyEDA footprint to KiCad footprint
     let mut ki_footprint = kicad::KiFootprint {
-        name: footprint_name,
+        name: footprint_name.to_string(),
         pads: Vec::new(),
         tracks: Vec::new(),
         circles: Vec::new(),
@@ -427,56 +488,7 @@ pub fn convert_footprint(
 
     add_generated_courtyard_if_missing(&mut ki_footprint, &converter);
 
-    // Add 3D model reference if available
-    if let Some(model_info) = &component_data.model_3d
-        && args.targets_model_3d()
-    {
-        // Use LCSC ID as unique identifier to prevent name collisions
-        let model_name = component_identity_name(&sanitize_name(&model_info.title), lcsc_id);
-
-        // Default to project-relative paths (KIPRJMOD) for easier setup
-        // Use --project-relative flag to force global paths if needed
-        // Prefer STEP format as it's more widely supported
-        let model_lib_name = lib_manager.model_lib_name();
-        let model_dir_name = lib_manager.model_dir_name();
-        let model_path = if args.project_relative {
-            format!("${{KIPRJMOD}}/{}/{}.step", model_dir_name, model_name)
-        } else {
-            format!(
-                "${{{}}}/{}/{}.step",
-                model_lib_name, model_dir_name, model_name
-            )
-        };
-
-        ki_footprint.model_3d = Some(kicad::Ki3dModel {
-            path: model_path,
-            // The model's own coordinates already place it: its rotation is the only thing the
-            // exported footprint adds, and the STEP itself is lifted onto the board plane when it
-            // is written (see `crate::step_model`).
-            offset: (0.0, 0.0, 0.0),
-            scale: (1.0, 1.0, 1.0),
-            rotate: (
-                0.0,
-                0.0,
-                crate::util::model_rotation_z(model_info.rotation_z),
-            ),
-        });
-    }
-
-    // Export footprint
-    let exporter = kicad::FootprintExporter::new();
-    let footprint_data = exporter.export(&ki_footprint)?;
-    let (_, status) =
-        lib_manager.write_footprint_if_needed(&ki_footprint.name, &footprint_data, args.force)?;
-
-    match status {
-        FileWriteStatus::Written => log::debug!("Wrote footprint: {}", ki_footprint.name),
-        FileWriteStatus::Skipped => {
-            log::debug!("Skipped existing footprint: {}", ki_footprint.name)
-        }
-    }
-
-    Ok(())
+    Ok(ki_footprint)
 }
 
 fn is_footprint_graphic_layer(layer_id: i32) -> bool {

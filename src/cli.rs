@@ -96,6 +96,8 @@ pub enum Commands {
     Altium(AltiumCommands),
     /// Export KiCad libraries from one component or an ID file
     Kicad(KicadCommands),
+    /// Export Cadence (OrCAD Capture / Allegro) sources from one component or an ID file
+    Cadence(CadenceCommands),
 }
 
 #[derive(Debug, Args)]
@@ -168,6 +170,48 @@ pub struct KicadCommands {
     /// Use project-relative KIPRJMOD paths for 3D model references
     #[arg(long)]
     pub project_relative: bool,
+    /// Metadata language: auto, en, or zh
+    #[arg(long, value_enum, default_value_t = MetadataLanguage::Auto)]
+    pub language: MetadataLanguage,
+}
+
+#[derive(Debug, Args)]
+pub struct CadenceCommands {
+    /// Component ID or search keyword (use -i for multiple components)
+    pub component: Option<String>,
+    /// Text file containing component IDs to export
+    #[arg(long, short = 'i', value_name = "FILE", conflicts_with = "component")]
+    pub input: Option<PathBuf>,
+    /// Export Capture symbols only
+    #[arg(long)]
+    pub symbol: bool,
+    /// Export Allegro footprints only
+    #[arg(long)]
+    pub footprint: bool,
+    /// Export 3D STEP models only
+    #[arg(long = "3d")]
+    pub model_3d: bool,
+    /// Export everything: symbols, footprints and 3D models
+    #[arg(long)]
+    pub full: bool,
+    /// Output directory for the Cadence sources
+    #[arg(long, short = 'o', default_value = "cadence_libs")]
+    pub output: PathBuf,
+    /// Add to the library already in the output directory
+    #[arg(long)]
+    pub append: bool,
+    /// Library base name (defaults from the output directory)
+    #[arg(long = "name", value_name = "NAME")]
+    pub library_name: Option<String>,
+    /// Maximum number of component exports to run at once
+    #[arg(short = 'j', default_value_t = 4)]
+    pub parallel: usize,
+    /// Replace existing outputs
+    #[arg(long)]
+    pub force: bool,
+    /// Keep the EasyEDA logo on downloaded 3D models (it is removed by default)
+    #[arg(long)]
+    pub keep_model_logo: bool,
     /// Metadata language: auto, en, or zh
     #[arg(long, value_enum, default_value_t = MetadataLanguage::Auto)]
     pub language: MetadataLanguage,

@@ -49,7 +49,7 @@ pub struct Model3dInfo {
 }
 
 /// Where EasyEDA puts a 3D model on its footprint (`c_origin`, `z`, `c_rotation`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ModelPlacement {
     /// Model centre.
     pub origin_x: f64,

@@ -28,8 +28,13 @@
 //! Call [`place_step_on_board`] before writing or embedding a downloaded STEP model.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::io::{self, Write};
 use std::ops::Range;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::step_logo::{LogoOutcome, strip_logo};
 
 /// Share of the lowest vertices ignored when reading the underside of a part.
 const UNDERSIDE_TRIM: f64 = 0.02;
@@ -282,6 +287,108 @@ fn find_from(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .position(|window| window == needle)
         .map(|offset| from + offset)
 }
+
+/// EasyEDA puts its logo on many of its STEP models. Removing it is on by default for every
+/// target: the model is rebuilt without the logo. When that cannot be done without breaking the
+/// model, the original model is exported and its part is remembered, so the run can tell the user
+/// exactly which models still show the logo.
+pub struct ModelCleanup {
+    remove_logo: bool,
+    removed: AtomicUsize,
+    with_logo: Mutex<Vec<String>>,
+}
+
+impl Default for ModelCleanup {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl fmt::Debug for ModelCleanup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModelCleanup")
+            .field("remove_logo", &self.remove_logo)
+            .field("removed", &self.removed())
+            .field("with_logo", &self.parts_with_logo())
+            .finish()
+    }
+}
+
+impl ModelCleanup {
+    pub fn new(remove_logo: bool) -> Self {
+        Self {
+            remove_logo,
+            removed: AtomicUsize::new(0),
+            with_logo: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The model of `part` as it should be exported: without the logo when that is asked for and
+    /// can be done, otherwise unchanged.
+    pub fn clean<'a>(&self, part: &str, step_data: &'a [u8]) -> Cow<'a, [u8]> {
+        if !self.remove_logo {
+            return Cow::Borrowed(step_data);
+        }
+        match strip_logo(step_data) {
+            (Some(model), LogoOutcome::Removed(removal)) => {
+                log::debug!(
+                    "{part}: removed the 3D model logo ({} pieces, {} faces)",
+                    removal.pieces,
+                    removal.faces
+                );
+                self.removed.fetch_add(1, Ordering::Relaxed);
+                Cow::Owned(model)
+            }
+            (_, outcome) => {
+                if outcome.logo_remains() {
+                    log::warn!("{part}: the 3D model logo could not be removed ({outcome:?})");
+                    if let Ok(mut parts) = self.with_logo.lock()
+                        && !parts.iter().any(|known| known == part)
+                    {
+                        parts.push(part.to_string());
+                    }
+                }
+                Cow::Borrowed(step_data)
+            }
+        }
+    }
+
+    /// Models rebuilt without the logo so far.
+    pub fn removed(&self) -> usize {
+        self.removed.load(Ordering::Relaxed)
+    }
+
+    /// Parts whose exported model still carries the logo, sorted.
+    pub fn parts_with_logo(&self) -> Vec<String> {
+        let mut parts = self
+            .with_logo
+            .lock()
+            .map(|parts| parts.clone())
+            .unwrap_or_default();
+        parts.sort();
+        parts
+    }
+
+    /// Lines for the export summary.
+    pub fn summary_lines(&self) -> Vec<String> {
+        if !self.remove_logo {
+            return vec!["3D logo removal: OFF (models keep the EasyEDA logo)".to_string()];
+        }
+        let with_logo = self.parts_with_logo();
+        let mut lines = vec![format!(
+            "3D logo removal: ON | removed {} | kept with logo {}",
+            self.removed(),
+            with_logo.len()
+        )];
+        if !with_logo.is_empty() {
+            lines.push(format!("{LOGO_KEPT_PREFIX} {}", with_logo.join(", ")));
+        }
+        lines
+    }
+}
+
+/// Starts the summary line that names the parts whose model still carries the logo.
+pub const LOGO_KEPT_PREFIX: &str = "Models with logo:";
 
 #[cfg(test)]
 mod tests {

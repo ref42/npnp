@@ -4,36 +4,21 @@
 
 <h1 align="center">npnp (Normalize Pin Net Pad)</h1>
 
-<p align="center">
-  <strong>A command-line tool for batch-exporting components from LCSC for Altium Designer (AD), KiCad and Cadence (OrCAD Capture / Allegro) to use.</strong>
-</p>
+<div align="center">
 
-<p align="center">
-  <a href=".github/workflows/release.yml"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2ea44f?style=flat-square" alt="platform Windows macOS Linux"></a>
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-edition%202024-f28d1a?style=flat-square" alt="rust edition 2024"></a>
-</p>
+[![release](https://img.shields.io/github/v/release/ref42/npnp?display_name=tag)](https://github.com/ref42/npnp/releases) [![crates.io](https://img.shields.io/crates/v/npnp)](https://crates.io/crates/npnp) [![license](https://img.shields.io/badge/license-Non--Commercial-blue)](LICENSE) [![CI](https://img.shields.io/github/actions/workflow/status/ref42/npnp/ci.yml)](https://github.com/ref42/npnp/actions/workflows/ci.yml) [![downloads](https://img.shields.io/github/downloads/ref42/npnp/total)](https://github.com/ref42/npnp/releases)
+
+![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust&logoColor=white) ![CLI](https://img.shields.io/badge/UI-command%20line-4b5563) ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-0078D6?logo=windows&logoColor=white) ![tokio](https://img.shields.io/badge/Async-tokio-14b8a6) ![reqwest](https://img.shields.io/badge/HTTP-reqwest-2ea44f)
+
+</div>
 
 <p align="center"><a href="README.en.md">English</a> | <a href="README.md">简体中文</a></p>
 
 ---
 
-## Before You Start
+**npnp** batch-exports LCSC components into formats that Altium Designer (AD), KiCad and Cadence (OrCAD Capture / Allegro) can use — built for scripts, batches and `CI`.
 
-> [!NOTE]
-> The source code is public again, but please follow the [LICENSE](LICENSE) when using this project.
-
-`npnp` stands for `Normalize Pin Net Pad`. It is the CLI tool I built while reverse-engineering parts of the `Altium Designer` library format and cleaning up the LCSC / EasyEDA export workflow. It is intended for users who need scripting, batch processing, CI, or simply prefer a command-line tool. If you need a GUI, use the related [`SeEx`](https://github.com/ref42/seex) application.
-
-`npnp` and `SeEx` should keep the same export behavior wherever possible, especially:
-
-- KiCad `3D` export writes downloaded STEP data directly, without the expensive STEP parse-and-rewrite pass.
-- KiCad STEP downloads use the same LCSC model endpoint and HTTP transport as Altium.
-- Both Altium and KiCad support Chinese or English metadata export; when the requested language is missing, existing source metadata is preserved as fallback.
-- Generated libraries are intended for real EDA use, but they should still be visually checked before production.
-
-If you find an issue in exported symbols, footprints, 3D models, or metadata, please open an `issue` with the LCSC ID, target EDA, export command, and screenshots. PRs are not merged by default unless the maintenance direction is agreed in advance.
-
-## What Can npnp Do?
+## ✨ Features
 
 ### KiCad
 
@@ -66,7 +51,83 @@ If you find an issue in exported symbols, footprints, 3D models, or metadata, pl
 - [x] Export raw symbol / footprint JSON for troubleshooting.
 - [x] Provide multi-platform Windows, macOS, and Linux release packages.
 
-## Supported EDA Versions
+## 🔄 Workflow
+
+<div align="center">
+  <img src="imgs/workflow.png" alt="npnp/seex workflow: LCSC part numbers → seex / npnp → KiCad, Altium, Cadence" width="900"/>
+</div>
+
+## 📸 Export Examples
+
+<table>
+  <summary>KiCad symbol and footprint examples</summary>
+
+  <table>
+    <tr>
+      <td><img src="imgs/showcase/kicad/sch_pcb/sch_pcb_1.png" alt="KiCad symbol and footprint example 1" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/sch_pcb/sch_pcb_2.png" alt="KiCad symbol and footprint example 2" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/sch_pcb/sch_pcb_3.png" alt="KiCad symbol and footprint example 3" width="420" /></td>
+    </tr>
+    <tr>
+      <td><img src="imgs/showcase/kicad/sch_pcb/sch_pcb_4.png" alt="KiCad symbol and footprint example 4" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/sch_pcb/sch_pcb_5.png" alt="KiCad symbol and footprint example 5" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/sch_pcb/sch_pcb_6.png" alt="KiCad symbol and footprint example 6" width="420" /></td>
+    </tr>
+  </table>
+</table>
+
+<table>
+  <summary>KiCad 3D model examples</summary>
+
+  <table>
+    <tr>
+      <td><img src="imgs/showcase/kicad/3d_models/SOT-89-3.png" alt="SOT-89-3" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/3d_models/TSSOP-20.png" alt="TSSOP-20" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/3d_models/QFN-80.png" alt="QFN-80" width="420" /></td>
+    </tr>
+    <tr>
+      <td><img src="imgs/showcase/kicad/3d_models/SOIC-8.png" alt="SOIC-8" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/3d_models/SOIC-14.png" alt="SOIC-14" width="420" /></td>
+      <td><img src="imgs/showcase/kicad/3d_models/LQFP-48.png" alt="LQFP-48" width="420" /></td>
+    </tr>
+  </table>
+</table>
+
+<table>
+  <summary>Altium SCH + 3D model examples</summary>
+
+  <table>
+    <tr>
+      <td><img src="imgs/showcase/ad/sch_3d/2N2222AU.png" alt="2N2222AU" width="420" /></td>
+      <td><img src="imgs/showcase/ad/sch_3d/CH32V003F4P6.png" alt="CH32V003F4P6" width="420" /></td>
+      <td><img src="imgs/showcase/ad/sch_3d/ESP32-S31NRV16.png" alt="ESP32-S31NRV16" width="420" /></td>
+    </tr>
+    <tr>
+      <td><img src="imgs/showcase/ad/sch_3d/NE555DR.png" alt="NE555DR" width="420" /></td>
+      <td><img src="imgs/showcase/ad/sch_3d/SN74HC04DR.png" alt="SN74HC04DR" width="420" /></td>
+      <td><img src="imgs/showcase/ad/sch_3d/STM32F103C8T6.png" alt="STM32F103C8T6" width="420" /></td>
+    </tr>
+  </table>
+</table>
+
+<table>
+  <summary>Altium PCB examples</summary>
+
+  <table>
+    <tr>
+      <td><img src="imgs/showcase/ad/pcd/sot89-3.png" alt="sot89-3" width="420" /></td>
+      <td><img src="imgs/showcase/ad/pcd/tssop-20.png" alt="tssop-20" width="420" /></td>
+      <td><img src="imgs/showcase/ad/pcd/qfn-80.png" alt="qfn-80" width="420" /></td>
+    </tr>
+    <tr>
+      <td><img src="imgs/showcase/ad/pcd/soic-8.png" alt="soic-8" width="420" /></td>
+      <td><img src="imgs/showcase/ad/pcd/soic-14.png" alt="soic-14" width="420" /></td>
+      <td><img src="imgs/showcase/ad/pcd/lqfp-48.png" alt="lqfp-48" width="420" /></td>
+    </tr>
+  </table>
+</table>
+
+## 🖥️ Supported EDA Versions
 
 > [!NOTE]
 > These are the versions currently known to work. npnp may support additional versions. If a library exported by npnp cannot be opened by an older EDA version, please open an issue so compatibility can be considered.
@@ -75,17 +136,11 @@ If you find an issue in exported symbols, footprints, 3D models, or metadata, pl
 - [x] `Altium Designer 23.x` to `Latest`
 - [x] `Cadence SPB 26.1` (OrCAD X Capture / Allegro X); the `Allegro` footprint scripts need a release that supports `SKILL` (`Allegro PCB Designer` or `OrCAD PCB Designer Professional`)
 
-## What Is Planned?
+## 🚀 Install and Use
 
-- [ ] Continue improving the current Altium / KiCad workflows and fix more hidden `bugs`.
-- [ ] Improve solder mask handling for irregular pads during `.PcbLib` export.
-- [ ] Support more `EDA` tools, such as `PADS`.
-- [ ] Add more regression fixtures for unusual symbols, footprints, and `3D` models.
-- [ ] Improve documentation for batch merge, append, and CI workflows.
+### Downloads
 
-## Downloads
-
-Each tagged release builds native `npnp` CLI archives for:
+Every tag release builds these native `npnp` CLI archives:
 
 - Windows x86_64: `npnp-vX.Y.Z-windows-x86_64.zip`
 - Windows ARM64: `npnp-vX.Y.Z-windows-aarch64.zip`
@@ -98,7 +153,23 @@ Each tagged release builds native `npnp` CLI archives for:
 - macOS Intel: `npnp-vX.Y.Z-macos-x86_64.tar.gz`
 - macOS Apple Silicon: `npnp-vX.Y.Z-macos-aarch64.tar.gz`
 
-## CLI
+### Install
+
+```bash
+cargo install npnp
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/ref42/npnp.git
+cd npnp
+cargo build --release
+```
+
+The executable is written to `target/release/npnp.exe`.
+
+### CLI
 
 Type `npnp p` to print ready-to-run commands. Export commands are grouped by target EDA tool:
 
@@ -138,47 +209,77 @@ Useful shared flags:
 - Missing STEP data does not prevent symbol or footprint export; the console summary identifies missing-model counts where the target supports 3D output.
 - The Cadence target writes `<library>.xml` (Capture Library XML), `<library>_allegro/` (one `SKILL` script per footprint plus the library script) and `<library>_step/` (the `3D` models). `npnp` calls no Cadence program: the `.olb` comes from `File > Import > Library XML` in Capture, and the `.dra`/`.psm`/`.pad` files from `skill load("<folder>/<library>.il")` in the Allegro command window.
 - Fresh merged output refuses to overwrite an existing library. Use `--append` to preserve the existing library collection and add new components, or `--force` when replacing standalone generated files is intentional.
+- Generated libraries target real EDA use, but a visual check is still recommended before production.
 
-## Export Examples
+## 📖 Before You Start
 
-<table>
-  <summary>KiCad examples</summary>
-  <tr>
-    <td align="center"><img src="imgs/kicad_symbol.png" alt="KiCad symbol" width="280" /><br /><sub>Symbol library</sub></td>
-    <td align="center"><img src="imgs/kicad_footprint.png" alt="KiCad footprint" width="280" /><br /><sub>Footprint library</sub></td>
-    <td align="center"><img src="imgs/kicad_3dmodel.png" alt="KiCad 3D model" width="280" /><br /><sub>3D model</sub></td>
-  </tr>
-</table>
+> [!NOTE]
+> The source is public again, but please follow the [LICENSE](LICENSE) when using it.
 
-<table>
-  <summary>Altium PCB library examples</summary>
-  <tr>
-    <td><img src="imgs/pcb_01.png" alt="Altium PCB example 1" width="420" /></td>
-    <td><img src="imgs/pcb_02.png" alt="Altium PCB example 2" width="420" /></td>
-    <td><img src="imgs/pcb_03.png" alt="Altium PCB example 3" width="420" /></td>
-  </tr>
-  <tr>
-    <td><img src="imgs/pcb_04.png" alt="Altium PCB example 4" width="420" /></td>
-    <td><img src="imgs/pcb_05.png" alt="Altium PCB example 5" width="420" /></td>
-    <td><img src="imgs/pcb_06.png" alt="Altium PCB example 6" width="420" /></td>
-  </tr>
-</table>
+`npnp` stands for `Normalize Pin Net Pad`: the CLI I built while reverse-engineering the `Altium Designer` file format and tidying up the LCSC/EasyEDA export flow. It is for people who want scripts, batches, `CI` or simply a command line; if you want a GUI, use the same family's [`SeEx`](https://github.com/ref42/seex).
 
-<table>
-  <summary>Altium SchLib examples</summary>
-  <tr>
-    <td><img src="imgs/sch_01.png" alt="Altium SchLib example 1" width="420" /></td>
-    <td><img src="imgs/sch_02.png" alt="Altium SchLib example 2" width="420" /></td>
-    <td><img src="imgs/sch_03.png" alt="Altium SchLib example 3" width="420" /></td>
-  </tr>
-  <tr>
-    <td><img src="imgs/sch_04.png" alt="Altium SchLib example 4" width="420" /></td>
-    <td><img src="imgs/sch_05.png" alt="Altium SchLib example 5" width="420" /></td>
-    <td><img src="imgs/sch_06.png" alt="Altium SchLib example 6" width="420" /></td>
-  </tr>
-</table>
+`npnp` and `SeEx` aim to export the same things, in particular:
 
-## References And Thanks
+- `3D` models are placed on the board plane before they are written, and the LCEDA logo is removed by default, so both front ends produce the same model.
+- `KiCad` and `Altium` download `STEP` through the same LCSC model endpoints and HTTP setup, falling back to the `easyeda.com` mirror when `lceda.cn` is unreachable.
+- `Altium`, `KiCad` and `Cadence` all export metadata in Chinese or English; when the target language is missing the source data is kept as a fallback.
+- Generated libraries target real EDA use, but a visual check is still recommended before production.
 
-- Thanks to [`easyeda2kicad`](https://github.com/uPesy/easyeda2kicad.py) and [uPesy](https://github.com/uPesy) for the project's original inspiration.
-- Thanks to everyone who helped test unusual components, footprints, symbol directions, 3D models, and cross-platform release packages.
+If an exported symbol, footprint, 3D model or metadata field looks wrong, please open an `issue` with the LCSC ID, the target EDA, the command and a screenshot. PRs are not merged by default unless the direction has been agreed first.
+
+## 🧩 Sister Project
+
+- [`SeEx`](https://github.com/ref42/seex) is the `GUI` version of `npnp`, kept in step with it, for people who prefer a window.
+  - Clipboard monitoring, part search, previews and export all happen in one place.
+  - For the `Cadence` target both projects write the same `Library XML` and `SKILL` scripts.
+  - `npnp` is the one to call from `AI`/agents: let the `AI` analyse a project, then have it run `npnp` to export the parts it needs.
+
+## 🗺️ Roadmap
+
+- [ ] Keep improving the Altium / KiCad / Cadence workflows and fix more hidden `bugs`.
+- [ ] Improve solder mask handling for irregular pads during `.PcbLib` export.
+- [ ] Support more `EDA` tools, such as `PADS`.
+- [ ] Add more regression fixtures for unusual symbols, footprints, and `3D` models.
+- [ ] Improve documentation for batch merge, append, and CI workflows.
+
+## 🤝 Contributing
+
+- [x] Has software design experience and can help maintain the software over time.
+- [x] Has good taste; your suggestions would be very welcome.
+- [x] If you have tokens to spare and are interested in this project, feel free to give it a go: the project does not reject `AI`, it only asks that every author on a submitted `PR` is a real living person.
+- [x] Contributing code is not required — every suggestion that makes `npnp` and `SeEx` better will be considered, and will be thanked at the end of this file.
+
+## 🙏 Acknowledgements
+
+The entries are in no particular order; they follow the development timeline.
+
+### References
+
+- [`easyeda2kicad`](https://github.com/uPesy/easyeda2kicad.py)@[uPesy](https://github.com/uPesy)
+  - Although it only supports `KiCad`, it gave me some of the inspiration. It is an excellent tool, and the vast majority of EasyEDA import plugins for `KiCad` on the market are built on top of it.
+- `IPC-7352(2023)` https://dokumen.pub/qdownload/ipc-7352-generic-guideline-for-land-pattern-design.html
+  - Used for the `Cadence` land calculations and for rebuilding the `3D` models.
+
+### Thanks
+
+- 菊猫
+  - Gave me part of my `TOKEN`. I also paid for some of it myself, but in the end it worked out as roughly half bought and half donated. `opus 4.6` was still very good at the time, and I leaned on it heavily to implement a lot of features and lay a good foundation.
+- emoji老弟@[z217-cpu](https://github.com/z217-cpu)
+  - Helped me test multi-platform compatibility from the very start of the project until now; thank you very much!
+- 🐏🐏@[Cloud-Lightning](https://github.com/Cloud-Lightning)
+  - Has used `seex`/`npnp` in several projects and gave me a great deal of practical advice; thank you very much!
+- c大佬@[lins-code54](https://github.com/lins-code54)
+  - Provided the `Cadence` export support for `SeEx`, which npnp's `Cadence` target comes from, and the `3D` model rebuild feature; thank you very much!
+- All users
+  - Without your downloads and `star`s this project might have been shelved; thank you very much!
+
+## 📄 License
+
+This project uses the custom **npnp Non-Commercial Share-Alike License 1.0**: studying, modifying and redistributing are allowed, **commercial use of any kind is not**, and modified works must be shared under the same license. The full terms are in [LICENSE](LICENSE).
+
+> [!NOTE]
+> Although the source code is public, please follow the [LICENSE](LICENSE) when using this project.
+
+## Copyright Notice
+
+`Altium` and `Altium Designer` are trademarks of Altium Limited; `Cadence`, `OrCAD` and `Allegro` are trademarks of Cadence Design Systems, Inc.; `LCSC`, `LCEDA` and `JLC` are trademarks of Shenzhen JLC Technology Group Co., Ltd. `KiCad` is the name and mark of the KiCad project and its developer community, released under the GPL. This project is not affiliated with or endorsed by any of these companies or projects; the names are used only to describe compatibility.

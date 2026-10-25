@@ -1,10 +1,6 @@
+# Build output and exported libraries only; the sources are tracked.
 /target
 /generated
 /compare
 /pcblib
 /schlib
-/assets
-/imgs
-/src
-Cargo.lock
-/tests

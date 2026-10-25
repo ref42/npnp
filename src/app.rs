@@ -629,6 +629,12 @@ fn prompt_examples(invoked_as: &str) -> String {
         &["C2040", "kicad_libs", "MyParts"],
     ));
     lines.push(String::new());
+    lines.push(heading("Export Cadence sources (OrCAD Capture / Allegro)"));
+    lines.push(command_line(
+        format!("  {command} cadence C2040 -o cadence_libs --name MyParts"),
+        &["C2040", "cadence_libs", "MyParts"],
+    ));
+    lines.push(String::new());
     lines.push(heading("Download a STEP model"));
     lines.push(command_line(
         format!("  {command} model C2040 -o step_models"),
@@ -663,6 +669,24 @@ fn prompt_examples(invoked_as: &str) -> String {
     lines.push(command_line(
         format!("  {command} kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42"),
         &["new_ids.txt", "kicad_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Export multiple Cadence components"));
+    lines.push(command_line(
+        format!("  {command} cadence -i ids.txt -o cadence_libs --name MyParts -j 42"),
+        &["ids.txt", "cadence_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Append Cadence components"));
+    lines.push(command_line(
+        format!("  {command} cadence -i new_ids.txt -o cadence_libs --name MyParts --append -j 42"),
+        &["new_ids.txt", "cadence_libs", "MyParts", "42"],
+    ));
+    lines.push(String::new());
+    lines.push(heading("Keep the EasyEDA logo on the 3D models"));
+    lines.push(command_line(
+        format!("  {command} kicad C2040 -o kicad_libs --keep-model-logo"),
+        &["C2040", "kicad_libs"],
     ));
     lines.push(String::new());
 

@@ -138,8 +138,28 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
         Commands::Altium(command) => run_altium_command(&client, command).await?,
         Commands::Kicad(command) => run_kicad_command(command).await?,
         Commands::Cadence(command) => run_cadence_command(command).await?,
+        Commands::Merge {
+            input,
+            output,
+            force,
+        } => run_merge_command(&input, &output, force)?,
     }
 
+    Ok(())
+}
+
+fn run_merge_command(input: &Path, output: &Path, force: bool) -> Result<()> {
+    let summary = crate::altium::merge::merge_library_directory(input, output, force)?;
+    println!(
+        "Library merge complete. SchLib files: {} (components: {}) | PcbLib files: {} (components: {})",
+        summary.schlib_files,
+        summary.schlib_components,
+        summary.pcblib_files,
+        summary.pcblib_components,
+    );
+    for path in summary.outputs {
+        println!("Generated: {}", display_path(&path));
+    }
     Ok(())
 }
 
@@ -679,6 +699,12 @@ fn prompt_examples(invoked_as: &str) -> String {
         &["new_ids.txt", "altium_libs", "MyParts", "42"],
     ));
     lines.push(String::new());
+    lines.push(heading("Merge existing Altium libraries"));
+    lines.push(command_line(
+        format!("  {command} merge -i altium_parts -o MyParts"),
+        &["altium_parts", "MyParts"],
+    ));
+    lines.push(String::new());
     lines.push(heading("Export multiple KiCad components"));
     lines.push(command_line(
         format!("  {command} kicad -i ids.txt -o kicad_libs --name MyParts -j 42"),
@@ -769,6 +795,7 @@ mod tests {
                 "npnp altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42"
             )
         );
+        assert!(text.contains("npnp merge -i altium_parts -o MyParts"));
         assert!(text.contains("npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42"));
         assert!(
             text.contains("npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42")

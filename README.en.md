@@ -33,6 +33,7 @@
 - [x] Support batch export.
 - [x] Export multiple components into one merged `.SchLib` / `.PcbLib` pair.
 - [x] Append new components to an existing npnp merged library without replacing the old components.
+- [x] Merge existing Altium `.SchLib` / `.PcbLib` files from a directory into one library pair.
 
 ### Cadence (OrCAD Capture / Allegro)
 
@@ -180,6 +181,8 @@ npnp altium C2040 -o altium_libs
 npnp altium -i ids.txt -o altium_libs --name MyParts -j 42
 npnp altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42
 
+npnp merge -i altium_parts -o MyParts
+
 npnp kicad C2040 -o kicad_libs --name MyParts
 npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42
 npnp kicad -i new_ids.txt -o kicad_libs --name MyParts --append -j 42
@@ -201,6 +204,7 @@ Useful shared flags:
 - `-i`: reads IDs from any plain-text file; the filename does not need a `.txt` extension.
 - `--name`: optional override for the generated library base name.
 - `--append` updates the library collection inside the selected `-o` directory. For Altium it discovers the merged `.SchLib`/`.PcbLib`; for KiCad it discovers the `.kicad_sym`, `.pretty`, and `.3dshapes` libraries; for Cadence it adds to the existing `<library>.xml` and `_allegro` folder.
+- `npnp merge -i <DIR> -o <NAME>` reads the `.SchLib` and `.PcbLib` files directly inside `<DIR>` and writes `<NAME>.SchLib` and `<NAME>.PcbLib` for the types found. Use `--force` to replace an existing output. Component names must be unique across the input files.
 - `--keep-model-logo`: keep the EasyEDA logo on downloaded `3D` models (it is removed by default).
 
 ### Export contract

@@ -101,6 +101,18 @@ pub enum Commands {
     Kicad(KicadCommands),
     /// Export Cadence (OrCAD Capture / Allegro) sources from one component or an ID file
     Cadence(CadenceCommands),
+    /// Merge existing Altium SchLib/PcbLib files from a directory
+    Merge {
+        /// Directory containing the libraries to merge
+        #[arg(long, short = 'i', value_name = "DIR")]
+        input: PathBuf,
+        /// Output library base path (extensions are added automatically)
+        #[arg(long, short = 'o', value_name = "NAME")]
+        output: PathBuf,
+        /// Replace output libraries that already exist
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -327,6 +339,31 @@ mod tests {
         assert!(component.is_none());
         assert!(model_3d);
         assert_eq!(parallel, 42);
+    }
+
+    #[test]
+    fn parses_merge_directory_command() {
+        let cli = Cli::try_parse_from([
+            "npnp",
+            "merge",
+            "-i",
+            "libraries",
+            "-o",
+            "MyParts",
+            "--force",
+        ])
+        .expect("merge command should parse");
+        let Some(Commands::Merge {
+            input,
+            output,
+            force,
+        }) = cli.command
+        else {
+            panic!("expected merge command");
+        };
+        assert_eq!(input, PathBuf::from("libraries"));
+        assert_eq!(output, PathBuf::from("MyParts"));
+        assert!(force);
     }
 
     #[test]

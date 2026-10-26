@@ -1,6 +1,6 @@
 [package]
 name = "npnp"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2024"
 autobins = false
 authors = ["ref42 <ybinlew@gmail.com>"]

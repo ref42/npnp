@@ -149,16 +149,47 @@ pub async fn run_cli(cli: Cli, invoked_as: &str) -> Result<()> {
 }
 
 fn run_merge_command(input: &Path, output: &Path, force: bool) -> Result<()> {
-    let summary = crate::altium::merge::merge_library_directory(input, output, force)?;
-    println!(
-        "Library merge complete. SchLib files: {} (components: {}) | PcbLib files: {} (components: {})",
-        summary.schlib_files,
-        summary.schlib_components,
-        summary.pcblib_files,
-        summary.pcblib_components,
-    );
-    for path in summary.outputs {
-        println!("Generated: {}", display_path(&path));
+    let altium = crate::altium::merge::directory_has_libraries(input)?;
+    let kicad = crate::kicad::merge::directory_has_libraries(input)?;
+    if !altium && !kicad {
+        return Err(crate::error::AppError::Other(format!(
+            "no supported Altium or KiCad libraries found in {}",
+            display_path(input)
+        )));
+    }
+    if altium && kicad {
+        return Err(crate::error::AppError::Other(
+            "input contains both Altium and KiCad libraries; put each format in a separate directory".into(),
+        ));
+    }
+
+    if altium {
+        let summary = crate::altium::merge::merge_library_directory(input, output, force)?;
+        println!(
+            "Altium merge complete. SchLib files: {} (components: {}) | PcbLib files: {} (components: {})",
+            summary.schlib_files,
+            summary.schlib_components,
+            summary.pcblib_files,
+            summary.pcblib_components,
+        );
+        for path in summary.outputs {
+            println!("Generated: {}", display_path(&path));
+        }
+    }
+    if kicad {
+        let summary = crate::kicad::merge::merge_library_directory(input, output, force)?;
+        println!(
+            "KiCad merge complete. Symbol files: {} (symbols: {}) | Footprint libraries: {} (footprints: {}) | 3D libraries: {} (models: {})",
+            summary.symbol_files,
+            summary.symbols,
+            summary.footprint_libraries,
+            summary.footprints,
+            summary.model_libraries,
+            summary.models,
+        );
+        for path in summary.outputs {
+            println!("Generated: {}", display_path(&path));
+        }
     }
     Ok(())
 }
@@ -699,10 +730,14 @@ fn prompt_examples(invoked_as: &str) -> String {
         &["new_ids.txt", "altium_libs", "MyParts", "42"],
     ));
     lines.push(String::new());
-    lines.push(heading("Merge existing Altium libraries"));
+    lines.push(heading("Merge existing Altium or KiCad libraries"));
     lines.push(command_line(
         format!("  {command} merge -i altium_parts -o MyParts"),
         &["altium_parts", "MyParts"],
+    ));
+    lines.push(command_line(
+        format!("  {command} merge -i kicad_parts -o MyParts"),
+        &["kicad_parts", "MyParts"],
     ));
     lines.push(String::new());
     lines.push(heading("Export multiple KiCad components"));

@@ -26,6 +26,7 @@
 - [x] Export individual components or batch export from a text file.
 - [x] Append or update existing `.kicad_sym`, `.pretty`, and `.3dshapes` libraries.
 - [x] Write STEP models directly into `.3dshapes` and reference them from footprints.
+- [x] Merge existing KiCad symbol, footprint, and 3D libraries from a directory.
 
 ### Altium Designer (AD)
 
@@ -182,6 +183,7 @@ npnp altium -i ids.txt -o altium_libs --name MyParts -j 42
 npnp altium -i new_ids.txt -o altium_libs --name MyParts --append -j 42
 
 npnp merge -i altium_parts -o MyParts
+npnp merge -i kicad_parts -o MyParts
 
 npnp kicad C2040 -o kicad_libs --name MyParts
 npnp kicad -i ids.txt -o kicad_libs --name MyParts -j 42
@@ -204,8 +206,25 @@ Useful shared flags:
 - `-i`: reads IDs from any plain-text file; the filename does not need a `.txt` extension.
 - `--name`: optional override for the generated library base name.
 - `--append` updates the library collection inside the selected `-o` directory. For Altium it discovers the merged `.SchLib`/`.PcbLib`; for KiCad it discovers the `.kicad_sym`, `.pretty`, and `.3dshapes` libraries; for Cadence it adds to the existing `<library>.xml` and `_allegro` folder.
-- `npnp merge -i <DIR> -o <NAME>` reads the `.SchLib` and `.PcbLib` files directly inside `<DIR>` and writes `<NAME>.SchLib` and `<NAME>.PcbLib` for the types found. Use `--force` to replace an existing output. Component names must be unique across the input files.
 - `--keep-model-logo`: keep the EasyEDA logo on downloaded `3D` models (it is removed by default).
+
+### Merge existing libraries
+
+```bash
+npnp merge -i path/to/libraries -o merged/MyParts
+npnp merge -i path/to/libraries -o merged/MyParts --force
+```
+
+Put libraries directly in the input directory. The command detects Altium or KiCad; keep the two formats in separate directories. This command works offline and does not convert between EDA formats.
+
+- Altium: `.SchLib` and `.PcbLib` files become `MyParts.SchLib` and `MyParts.PcbLib`.
+- Altium excludes the requested output files on reruns. Repeated component names keep the first serialized record, which lets an earlier merged library coexist with its source libraries when choosing a new output name.
+- KiCad 6 and later: `.kicad_sym` files, `.pretty` directories, and `.3dshapes` directories become `MyParts.kicad_sym`, `MyParts.pretty`, and `MyParts.3dshapes`. Include whichever types you need. Model subdirectories are preserved.
+- `-o` is an output **base path**, not an output directory. Existing outputs require `--force`. KiCad excludes the requested output libraries from its inputs, so rerunning into the same directory works. Replacement removes stale files from the output directories; nesting an output inside a source library is rejected.
+- Identical same-named KiCad entries are kept once, comparing symbols and footprints after reference updates and ignoring whitespace. This allows previous merged libraries to coexist with their sources when choosing a new output name. Different contents under the same name still stop the merge before outputs change, even with `--force`. Legacy `.lib` symbols and unsupported library-level metadata are not merged.
+- Symbol footprint properties are updated when their target footprint is included. Included model references use absolute paths to the copied files, so no new KiCad path variable is needed. External references stay unchanged. If you move the merged files, update those model paths in KiCad or rerun the merge at the new destination.
+
+Register `MyParts.kicad_sym` in KiCad's symbol library table and `MyParts.pretty` in its footprint library table using the nickname `MyParts`.
 
 ### Export contract
 

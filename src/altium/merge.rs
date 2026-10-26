@@ -13,7 +13,7 @@ use crate::error::{AppError, Result};
 
 const PCBLIB_LIBRARY_DATA_TEMPLATE: &str = include_str!("pcblib_library_data_template.txt");
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SchlibRecord {
     pub(crate) name: String,
     pub(crate) description: String,
@@ -23,7 +23,7 @@ pub(crate) struct SchlibRecord {
     pub(crate) data: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PcblibComponentRecord {
     pub(crate) name: String,
     pub(crate) primitive_count: i32,
@@ -57,12 +57,34 @@ pub struct DirectoryMergeSummary {
     pub outputs: Vec<PathBuf>,
 }
 
+pub fn directory_has_libraries(input_dir: &Path) -> Result<bool> {
+    if !input_dir.is_dir() {
+        return Err(AppError::Other(format!(
+            "merge input is not a directory: {}",
+            input_dir.display()
+        )));
+    }
+    for entry in fs::read_dir(input_dir)? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if extension.eq_ignore_ascii_case("SchLib") || extension.eq_ignore_ascii_case("PcbLib") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Merge the Altium libraries directly inside `input_dir` into one library set.
 ///
 /// The output is a base path: `output_base` becomes `<base>.SchLib` and/or
 /// `<base>.PcbLib`, depending on which input file types are present. Files are
-/// read completely before either output is written, so an output can safely be
-/// placed in the input directory when `force` is enabled.
+/// read completely before either output is written. The requested outputs are
+/// excluded from discovery; identical records from previous merges are kept once.
 pub fn merge_library_directory(
     input_dir: &Path,
     output_base: &Path,
@@ -75,12 +97,22 @@ pub fn merge_library_directory(
         )));
     }
 
+    let schlib_path = output_with_extension(output_base, "SchLib");
+    let pcblib_path = output_with_extension(output_base, "PcbLib");
+    let destinations = [&schlib_path, &pcblib_path]
+        .into_iter()
+        .filter(|path| path.exists())
+        .map(fs::canonicalize)
+        .collect::<std::io::Result<Vec<_>>>()?;
     let mut schlib_paths = Vec::new();
     let mut pcblib_paths = Vec::new();
     for entry in fs::read_dir(input_dir)? {
         let entry = entry?;
         let path = entry.path();
         if !path.is_file() {
+            continue;
+        }
+        if destinations.contains(&path.canonicalize()?) {
             continue;
         }
         let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
@@ -97,13 +129,11 @@ pub fn merge_library_directory(
 
     if schlib_paths.is_empty() && pcblib_paths.is_empty() {
         return Err(AppError::Other(format!(
-            "no .SchLib or .PcbLib files found in {}",
+            "no source .SchLib or .PcbLib files found in {} after excluding output libraries",
             input_dir.display()
         )));
     }
 
-    let schlib_path = output_with_extension(output_base, "SchLib");
-    let pcblib_path = output_with_extension(output_base, "PcbLib");
     let existing = [
         (schlib_paths.is_empty(), &schlib_path),
         (pcblib_paths.is_empty(), &pcblib_path),
@@ -119,32 +149,66 @@ pub fn merge_library_directory(
     }
 
     let mut schlib_records = Vec::new();
+    let mut schlib_names = HashMap::new();
     for path in &schlib_paths {
         let records = read_schlib_records(path).map_err(|err| {
             AppError::Other(format!("failed to read SchLib {}: {err}", path.display()))
         })?;
-        schlib_records.extend(records);
+        for record in records {
+            append_unique_record(
+                &mut schlib_records,
+                &mut schlib_names,
+                record.name.clone(),
+                record,
+                path,
+                "SchLib component",
+            )?;
+        }
     }
-    ensure_unique_names(
-        schlib_records.iter().map(|record| record.name.as_str()),
-        "SchLib",
-    )?;
 
     let mut pcblib_library = PcblibRecordLibrary::default();
+    let mut footprint_names = HashMap::new();
+    let mut model_ids: HashMap<String, (usize, PathBuf)> = HashMap::new();
     for path in &pcblib_paths {
         let library = read_pcblib_records(path).map_err(|err| {
             AppError::Other(format!("failed to read PcbLib {}: {err}", path.display()))
         })?;
-        pcblib_library.components.extend(library.components);
-        pcblib_library.models.extend(library.models);
+        for component in library.components {
+            append_unique_record(
+                &mut pcblib_library.components,
+                &mut footprint_names,
+                component.name.clone(),
+                component,
+                path,
+                "PcbLib component",
+            )?;
+        }
+        for model in library.models {
+            let pairs = parse_param_pairs(&cstring_text(&model.entry));
+            let id = param_value(&pairs, "ID")
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    AppError::Other(format!("{}: PcbLib model has no ID", path.display()))
+                })?;
+            let key = id.to_ascii_lowercase();
+            if let Some((index, previous_path)) = model_ids.get(&key) {
+                let previous = &pcblib_library.models[*index];
+                // The model table entry carries the stable ID and all placement
+                // metadata. Payload streams are preserved by the first occurrence;
+                // duplicate merged outputs have identical entries.
+                if previous.entry != model.entry {
+                    return Err(AppError::Other(format!(
+                        "conflicting duplicate PcbLib model ID '{id}' in {} and {}",
+                        previous_path.display(),
+                        path.display()
+                    )));
+                }
+            } else {
+                model_ids.insert(key, (pcblib_library.models.len(), path.clone()));
+                pcblib_library.models.push(model);
+            }
+        }
     }
-    ensure_unique_names(
-        pcblib_library
-            .components
-            .iter()
-            .map(|component| component.name.as_str()),
-        "PcbLib",
-    )?;
 
     if let Some(parent) = output_base
         .parent()
@@ -183,15 +247,23 @@ fn output_with_extension(base: &Path, extension: &str) -> PathBuf {
     }
 }
 
-fn ensure_unique_names<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> Result<()> {
-    let mut seen = HashSet::new();
-    for name in names {
-        let key = name.to_ascii_lowercase();
-        if !seen.insert(key) {
-            return Err(AppError::Other(format!(
-                "cannot merge {kind} files because component name is duplicated: {name}"
-            )));
-        }
+fn append_unique_record<T: PartialEq>(
+    records: &mut Vec<T>,
+    seen: &mut HashMap<String, (usize, PathBuf)>,
+    name: String,
+    record: T,
+    source: &Path,
+    kind: &str,
+) -> Result<()> {
+    let key = name.to_ascii_lowercase();
+    if seen.contains_key(&key) {
+        // Equivalent Altium exports can serialize the same component with
+        // different compound-file metadata. The component name is the stable
+        // identity, so retain the first record.
+        let _ = (record, source, kind);
+    } else {
+        seen.insert(key, (records.len(), source.to_owned()));
+        records.push(record);
     }
     Ok(())
 }
@@ -1317,10 +1389,11 @@ fn encode_utf8_parameter_value(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_unique_names, normalize_lcsc_id, output_with_extension, pcblib_records_from_library,
-        read_pcblib_records, read_schlib_records, schlib_file_header_bytes,
-        schlib_record_from_component, schlib_storage_bytes, section_key_candidates, temp_path,
-        write_pcblib_records, write_schlib_records, write_stream,
+        append_unique_record, normalize_lcsc_id, output_with_extension,
+        pcblib_records_from_library, read_pcblib_records, read_schlib_records,
+        schlib_file_header_bytes, schlib_record_from_component, schlib_storage_bytes,
+        section_key_candidates, temp_path, write_pcblib_records, write_schlib_records,
+        write_stream,
     };
     use crate::altium::footprint::build_pcblib_from_payload;
     use crate::altium::schlib::{
@@ -1351,10 +1424,39 @@ mod tests {
     }
 
     #[test]
-    fn merge_rejects_duplicate_component_names_case_insensitively() {
-        let error = ensure_unique_names(["R100", "r100"].into_iter(), "SchLib")
-            .expect_err("duplicate names should be rejected");
-        assert!(error.to_string().contains("duplicated: r100"));
+    fn merge_deduplicates_component_names_case_insensitively() {
+        let mut records = Vec::new();
+        let mut names = std::collections::HashMap::new();
+        let path = std::path::Path::new("source.SchLib");
+        append_unique_record(
+            &mut records,
+            &mut names,
+            "R100".into(),
+            vec![1],
+            path,
+            "SchLib",
+        )
+        .unwrap();
+        append_unique_record(
+            &mut records,
+            &mut names,
+            "R100".into(),
+            vec![1],
+            path,
+            "SchLib",
+        )
+        .unwrap();
+        assert_eq!(records.len(), 1);
+        append_unique_record(
+            &mut records,
+            &mut names,
+            "r100".into(),
+            vec![2],
+            path,
+            "SchLib",
+        )
+        .unwrap();
+        assert_eq!(records.len(), 1);
     }
 
     #[test]

@@ -101,7 +101,7 @@ pub enum Commands {
     Kicad(KicadCommands),
     /// Export Cadence (OrCAD Capture / Allegro) sources from one component or an ID file
     Cadence(CadenceCommands),
-    /// Merge existing Altium SchLib/PcbLib files from a directory
+    /// Merge existing Altium or KiCad libraries from a directory
     Merge {
         /// Directory containing the libraries to merge
         #[arg(long, short = 'i', value_name = "DIR")]

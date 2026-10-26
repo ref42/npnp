@@ -23,7 +23,8 @@ pub fn convert_footprint(
         && args.targets_model_3d()
     {
         // Use LCSC ID as unique identifier to prevent name collisions
-        let model_name = format!("{}_{}", sanitize_name(&model_info.title), lcsc_id);
+        let model_name =
+            crate::util::component_identity_name(&sanitize_name(&model_info.title), lcsc_id);
 
         // Prefer STEP format as it's more widely supported
         let model_lib_name = lib_manager.model_lib_name();

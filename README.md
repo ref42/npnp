@@ -203,6 +203,24 @@ npnp model -i ids.txt -o step_models -j 42
 - `--append`：更新 `-o` 指定目录中的库集合。Altium 会发现合并的 `.SchLib`/`.PcbLib`，KiCad 会发现 `.kicad_sym`、`.pretty` 和 `.3dshapes` 库，Cadence 会向已有的 `<库名>.xml` 和 `_allegro` 目录追加。
 - `--keep-model-logo`：保留下载 `3D` 模型上的立创 EDA 标志（默认会去除）。
 
+### 合并现有库
+
+```bash
+npnp merge -i path/to/libraries -o merged/MyParts
+npnp merge -i path/to/libraries -o merged/MyParts --force
+```
+
+将待合并的库直接放在输入目录中。命令自动识别 Altium 或 KiCad；两种格式应放在不同目录。本命令离线运行，不转换 EDA 格式。
+
+- Altium：将 `.SchLib` 和 `.PcbLib` 文件分别合并为 `MyParts.SchLib`、`MyParts.PcbLib`。
+- Altium 会在重复执行时排除本次指定的输出文件。同名器件保留第一份记录，因此更换输出名时，之前的合并库可以与源库共存。
+- KiCad 6 及以上：将 `.kicad_sym` 文件、`.pretty` 目录、`.3dshapes` 目录分别合并为 `MyParts.kicad_sym`、`MyParts.pretty`、`MyParts.3dshapes`。可以只提供其中部分类型；模型子目录会保留。
+- `-o` 指定输出基础路径，不是输出目录。已有输出需要 `--force` 才会替换。KiCad 会从输入中排除本次指定的输出库，允许在同一目录重复执行；替换会移除输出库目录中的旧文件，但不允许将输出嵌套在源库目录内。
+- KiCad 同名且内容一致的条目只保留一份，符号和封装在更新引用后比较，忽略空白格式差异。因此更换输出名时，之前的合并库可以与源库共存。同名但内容不同仍会在写出前报错，`--force` 不会忽略冲突。不合并旧版 `.lib` 符号库或不支持的库级元数据。
+- 若引用的封装也在输入中，符号的封装引用会更新。模型引用会改为复制后文件的绝对路径，无需增加 KiCad 路径变量；外部引用保持不变。移动合并后的文件时，需要在 KiCad 中修改模型路径，或在新位置重新合并。
+
+在 KiCad 符号库表中添加 `MyParts.kicad_sym`，在封装库表中添加 `MyParts.pretty`，库昵称均使用 `MyParts`。
+
 ### 导出约定
 
 - 生成的器件和模型名称是确定性的：`<source-name>__<LCSC-ID>`。原理图库元数据中仍会保留 `NPNP_COMPONENT_ID`。

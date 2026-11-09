@@ -1036,6 +1036,13 @@ pub fn layout_lands(package: &Package) -> (Vec<Land>, Lands) {
             h: ey,
         });
     }
+    #[cfg(feature = "ep_debug")]
+    {
+        eprintln!("DEBUG row: {:?} len={}", row, len);
+        for (i, l) in out.iter().enumerate() {
+            eprintln!("DEBUG land[{}] x={:.3} y={:.3} w={:.3} h={:.3}", i, l.x, l.y, l.w, l.h);
+        }
+    }
     (out, row)
 }
 
@@ -1056,13 +1063,70 @@ pub struct LandPattern {
 /// Calculate the IPC-7352 land pattern for `package_name` and line it up with
 /// EasyEDA's footprint `easyeda` to carry its pin numbers over. `first_pin` is the
 /// pad that goes where IPC puts pin 1 (the cathode of diodes and LEDs).
+
+/// The exposed pad of a no-lead/SOIC-EP footprint, measured from EasyEDA's
+/// drawing: the pad with the largest copper area. Polygon pads are skipped
+/// (their area cannot be measured reliably).
+fn exposed_pad_from_drawing(
+    easyeda: &KiFootprint,
+    bound: (f64, f64),
+) -> Option<(f64, f64)> {
+    easyeda
+        .pads
+        .iter()
+        .filter(|pad| pad.polygon.is_none())
+        .filter(|pad| {
+            pad.size_x <= bound.0 && pad.size_y <= bound.1
+                || pad.size_y <= bound.0 && pad.size_x <= bound.1
+        })
+        .max_by(|a, b| (a.size_x * a.size_y).total_cmp(&(b.size_x * b.size_y)))
+        .map(|pad| (pad.size_x, pad.size_y))
+}
+
 pub fn land_pattern(
     package_name: &str,
     reference: &str,
     easyeda: &KiFootprint,
     first_pin: &str,
 ) -> Result<LandPattern, String> {
-    let package = package_from_name(package_name, reference)?;
+    // When the package name carries an EP marker without the exposed-pad size
+    // (LCSC titles like "...-EP"), measure the exposed pad from EasyEDA's
+    // drawing (largest pad) and retry with the size injected as an EP token.
+    let (package, measured_ep) = match package_from_name(package_name, reference) {
+        Ok(package) => (package, None),
+        Err(reason)
+            if reason == "exposed pad size missing from the package name" =>
+    {
+        // The exposed pad must fit inside the package body (name L/W, 50%
+        // slack): LCSC drawings sometimes include a courtyard-sized "pad"
+        // object covering the whole outline, which is not the exposed pad.
+        let dims = name_dims(package_name);
+        let bound = (
+            dims.l.map(|v| v * 1.5).unwrap_or(f64::INFINITY),
+            dims.w.map(|v| v * 1.5).unwrap_or(f64::INFINITY),
+        );
+        let (w, h) = exposed_pad_from_drawing(easyeda, bound)
+            .ok_or_else(|| reason.clone())?;
+        let injected = format!("{package_name}-EP{w}X{h}");
+        let retried = package_from_name(&injected, reference).map_err(|retry| {
+            format!(
+                "{reason}; the drawing suggests an exposed pad of \
+                 {w:.2} x {h:.2} mm, but retrying with the injected \
+                 EP{w}X{h} token failed: {retry}"
+            )
+        })?;
+        (retried, Some((w, h)))
+    }
+    Err(reason) => return Err(reason),
+    };
+    #[cfg(feature = "ep_debug")]
+    eprintln!(
+        "DEBUG ep: measured=({:.2},{:.2}) layout={:?} lands={:?}",
+        measured_ep.map(|x| x.0).unwrap_or(-1.0),
+        measured_ep.map(|x| x.1).unwrap_or(-1.0),
+        package.layout,
+        package.exposed_pad,
+    );
     let (lands, row) = layout_lands(&package);
     if lands.iter().any(|l| l.w <= 0.0 || l.h <= 0.0) {
         return Err("the calculated lands have no size".into());
@@ -1074,7 +1138,16 @@ pub fn land_pattern(
     let theirs = easyeda_pads(easyeda)?;
     let ours: Vec<(f64, f64)> = lands.iter().map(|l| (l.x, l.y)).collect();
     let alignment = align(&ours, &theirs, first_pin)?;
-    let mut notes = Vec::new();
+    let mut notes = measured_ep
+        .map(|(w, h)| {
+            vec![format!(
+                "IPC-7352: the package name lacks the exposed-pad size; \
+                 {:.2} x {:.2} mm measured from EasyEDA's drawing and injected \
+                 as an EP{w}X{h} token",
+                w, h
+            )]
+        })
+        .unwrap_or_default();
     if !alignment.pin1_ipc {
         notes.push(format!(
             "IPC-7352: EasyEDA's pin {first_pin} is not at an IPC pin-1 position for this package; numbering kept from EasyEDA"

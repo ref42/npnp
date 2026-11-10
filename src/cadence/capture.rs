@@ -105,7 +105,13 @@ pub fn build_capture_part_with(
     let _ = writeln!(xml, "  <Package>");
     let _ = writeln!(
         xml,
-        "    <Defn alphabeticNumbering=\"1\" isHomogeneous=\"{}\" name=\"{}\" pcbFootprint=\"{}\" pcbLib=\"\" refdesPrefix=\"{}\" timestamp=\"0\" timezone=\"0\"/>",
+        "    <Defn alphabeticNumbering=\"{}\" isHomogeneous=\"{}\" name=\"{}\" pcbFootprint=\"{}\" pcbLib=\"\" refdesPrefix=\"{}\" timestamp=\"0\" timezone=\"0\"/>",
+        // Gate numbering mode (ref42/npnp#3): heterogeneous multi-section = 1
+        // (alphabetic gate suffixes U1A/U1B, Capture's convention for
+        // heterogeneous packages); single-gate = 2 (Numeric, no gate suffix --
+        // matches how Capture's own native libraries store single-gate parts,
+        // verified against 175 library OLBs via an OLB2XML export).
+        if heterogeneous { 1 } else { 2 },
         if heterogeneous { 0 } else { 1 },
         xml_escape(part_name),
         xml_escape(footprint),
@@ -355,6 +361,7 @@ fn user_properties(symbol: &KiSymbol) -> Vec<(&'static str, String)> {
 /// the symbol has outside its sub-parts belong to every section, as KiCad's
 /// unit 0 does.
 fn sections(symbol: &KiSymbol) -> Vec<KiSymbolUnit> {
+    use std::collections::HashSet;
     let common = KiSymbolUnit {
         pins: symbol.pins.clone(),
         rectangles: symbol.rectangles.clone(),
@@ -371,11 +378,30 @@ fn sections(symbol: &KiSymbol) -> Vec<KiSymbolUnit> {
     if units.is_empty() {
         return vec![common];
     }
+    // LCSC drawings often paint the WHOLE part (every pin, the full outline)
+    // into the common segment. Appending that wholesale would give every
+    // section the union of all pins (renamed duplicates: 12_2, ...), so when
+    // every section's pins are already covered by the common segment, each
+    // section keeps only its own content. Power pins genuinely drawn in the
+    // common segment alone (units lacking them) still get appended.
+    let common_numbers: HashSet<&str> = common
+        .pins
+        .iter()
+        .map(|pin| pin.number.as_str())
+        .collect();
+    let covered = !common.pins.is_empty()
+        && units.iter().all(|unit| {
+            unit.pins
+                .iter()
+                .all(|pin| common_numbers.contains(pin.number.as_str()))
+        });
     units
         .into_iter()
         .map(|unit| {
             let mut section = unit.clone();
-            append_translated(&mut section, &common, 0.0);
+            if !covered {
+                append_translated(&mut section, &common, 0.0);
+            }
             section
         })
         .collect()
@@ -945,6 +971,9 @@ fn capture_pins(
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut off_grid = Vec::new();
     let mut out = Vec::with_capacity(pins.len());
+    // (bare name, pin-number sort key) per emitted pin -- duplicate-name
+    // suffixes are assigned in a second pass, canonically by pin number.
+    let mut meta: Vec<(String, u64)> = Vec::with_capacity(pins.len());
 
     for pin in pins {
         let length = if pin.length.abs() < 1.0 {
@@ -970,6 +999,7 @@ fn capture_pins(
         } else {
             pin.number.trim().to_string()
         };
+        let num_key = base_number.parse::<u64>().unwrap_or(u64::MAX);
         let count = seen.entry(base_number.clone()).or_insert(0);
         *count += 1;
         let number = if *count == 1 {
@@ -987,6 +1017,7 @@ fn capture_pins(
         } else {
             pin.name.trim().to_string()
         };
+        meta.push((name.clone(), num_key));
 
         out.push(CapturePin {
             name,
@@ -1009,6 +1040,31 @@ fn capture_pins(
                     | PinStyle::EdgeClockHigh
             ),
         });
+    }
+
+    // Capture rejects duplicate pin names within a section. Give repeats a
+    // numeric suffix ordered by pin number -- NOT by drawing order, so parts
+    // whose LCSC drawings emit the same pins in different orders still rename
+    // identically and keep equal geometric signatures. Equal keys keep
+    // emission order (stable sort).
+    let mut by_name: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (i, (bare, _)) in meta.iter().enumerate() {
+        by_name.entry(bare.clone()).or_default().push(i);
+    }
+    for (bare, mut idxs) in by_name {
+        if idxs.len() < 2 {
+            continue;
+        }
+        idxs.sort_by_key(|&i| meta[i].1);
+        for (rank, &i) in idxs.iter().enumerate().skip(1) {
+            let renamed = format!("{}{}", bare, rank + 1);
+            warnings.push(format!(
+                "duplicate pin name {} (pin {}) renamed to {}",
+                bare, out[i].number, renamed
+            ));
+            out[i].name = renamed;
+        }
     }
 
     if !off_grid.is_empty() {
